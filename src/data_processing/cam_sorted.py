@@ -104,18 +104,45 @@ class CamSorter:
         """
         return cv2.flip(image, 0)  # 0 - отражение по горизонтальной оси
 
+    def _generate_new_filename(self, original_name: str, pair_number: int) -> str:
+        """
+        Генерирует новое имя файла на основе номера пары.
+
+        Args:
+            original_name: Оригинальное имя файла
+            pair_number: Номер пары (1, 2, 3, ...)
+
+        Returns:
+            Новое имя файла в формате "pair_letter.png"
+            Например: "1_a.png", "1_b.png", "2_a.png", "2_b.png"
+        """
+        # Извлекаем суффикс из оригинального имени (например, "_a" или "_b")
+        # Ищем последнее подчеркивание перед расширением
+        name_without_ext = original_name.rsplit('.', 1)[0]
+
+        # Пытаемся извлечь суффикс после последнего подчеркивания
+        if '_' in name_without_ext:
+            suffix = name_without_ext.split('_')[-1].lower()
+        else:
+            suffix = 'x'  # Если нет суффикса, используем 'x'
+
+        # Формируем новое имя: номер_пары + суффикс
+        return f"{pair_number}_{suffix}.png"
+
     def _process_and_save_image(
         self,
         image_path: Path,
-        output_path: Path,
+        output_folder: Path,
+        pair_number: int,
         flip: bool = False
     ) -> bool:
         """
-        Обрабатывает и сохраняет изображение.
+        Обрабатывает и сохраняет изображение с переименованием.
 
         Args:
             image_path: Путь к входному изображению
-            output_path: Путь для сохранения
+            output_folder: Папка для сохранения
+            pair_number: Номер пары для формирования нового имени
             flip: Применять ли отражение по горизонтали
 
         Returns:
@@ -132,8 +159,13 @@ class CamSorter:
         if flip:
             img = self._flip_horizontal(img)
 
+        # Генерация нового имени файла
+        new_filename = self._generate_new_filename(image_path.name, pair_number)
+        output_path = output_folder / new_filename
+
         # Сохранение изображения
         cv2.imwrite(str(output_path), img)
+        logger.debug(f"{image_path.name} → {new_filename}")
         return True
 
     def sort_images(self, validate_format: bool = True) -> Tuple[int, int]:
@@ -144,6 +176,10 @@ class CamSorter:
         - Первые две фотографии → cam_1/ (с отражением)
         - Следующие две фотографии → cam_2/ (без изменений)
         - Цикл повторяется
+
+        Переименование:
+        - Файлы переименовываются в формат: номер_пары_суффикс.png
+        - Например: image4499_a → 1_a.png, image4499_b → 1_b.png
 
         Args:
             validate_format: Выполнять ли валидацию формата изображений
@@ -171,6 +207,10 @@ class CamSorter:
         cam1_count = 0
         cam2_count = 0
 
+        # Счетчики пар для переименования
+        cam1_pair_counter = 1
+        cam2_pair_counter = 1
+
         # Сортировка изображений
         logger.info("Начало сортировки изображений...")
 
@@ -181,22 +221,33 @@ class CamSorter:
 
             if position_in_cycle < 2:
                 # Первые две позиции → cam_1 с отражением
-                output_path = self.cam1_folder / img_path.name
-                success = self._process_and_save_image(img_path, output_path, flip=True)
+                # Вычисляем номер пары: пара меняется каждые 2 изображения
+                success = self._process_and_save_image(
+                    img_path,
+                    self.cam1_folder,
+                    cam1_pair_counter,
+                    flip=True
+                )
 
                 if success:
                     cam1_count += 1
-                    logger.debug(
-                        f"{img_path.name} → cam_1/ (отражено по горизонтали)"
-                    )
+                    # Увеличиваем счетчик пар после каждого второго изображения
+                    if position_in_cycle == 1:
+                        cam1_pair_counter += 1
             else:
                 # Следующие две позиции → cam_2 без изменений
-                output_path = self.cam2_folder / img_path.name
-                success = self._process_and_save_image(img_path, output_path, flip=False)
+                success = self._process_and_save_image(
+                    img_path,
+                    self.cam2_folder,
+                    cam2_pair_counter,
+                    flip=False
+                )
 
                 if success:
                     cam2_count += 1
-                    logger.debug(f"{img_path.name} → cam_2/ (без изменений)")
+                    # Увеличиваем счетчик пар после каждого второго изображения
+                    if position_in_cycle == 3:
+                        cam2_pair_counter += 1
 
         # Вычисление количества пар
         cam1_pairs = cam1_count // 2
@@ -209,8 +260,10 @@ class CamSorter:
         logger.info("-" * 60)
         logger.info(f"cam_1: {cam1_pairs} пар изображений ({cam1_count} файлов)")
         logger.info("       Все изображения отзеркалены относительно горизонтальной оси")
+        logger.info("       Переименованы в формат: N_суффикс.png")
         logger.info(f"cam_2: {cam2_pairs} пар изображений ({cam2_count} файлов)")
         logger.info("       Изображения без изменений")
+        logger.info("       Переименованы в формат: N_суффикс.png")
         logger.info("=" * 60)
 
         return cam1_pairs, cam2_pairs
