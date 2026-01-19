@@ -131,7 +131,7 @@ class IntensityFilter:
     def _update_output_folder(self) -> None:
         """Обновление пути выходной папки на основе порога."""
         if self.input_folder is not None:
-            output_name = f"_intensity_filtered_{self.threshold}"
+            output_name = f"intensity_filtered_{self.threshold}"
             self.output_folder = self.input_folder / output_name
             logger.info(f"Выходная папка: {self.output_folder}")
 
