@@ -2,7 +2,7 @@
 Модуль фильтрации изображений по интенсивности для GUI приложения ParticleAnalysis.
 
 Этот модуль предназначен для интеграции с графическим интерфейсом и предоставляет:
-- Фильтрацию по минимальному пороговому значению (пиксели ниже порога → 0)
+- Фильтрацию по минимальному пороговому значению (ниже порога = 0)
 - Callback функции для отслеживания прогресса
 - Методы для предварительного просмотра результатов
 - Пошаговую обработку с возможностью отмены
@@ -65,15 +65,15 @@ class IntensityFilter:
     """
     Класс для фильтрации изображений по интенсивности с поддержкой GUI.
 
-    Фильтрация по минимальному порогу: все пиксели со значением ниже порога
-    приравниваются к нулю.
+    Фильтрация выполняется по минимальному пороговому значению:
+    все пиксели с интенсивностью ниже порога приравниваются к нулю.
     """
 
     def __init__(self):
         """Инициализация модуля фильтрации."""
         self.input_folder: Optional[Path] = None
         self.output_folder: Optional[Path] = None
-        self.threshold: int = 1000
+        self.threshold: int = 3240
         self._cancel_requested: bool = False
         self._progress_callback: Optional[Callable[[FilterProgress], None]] = None
 
@@ -81,7 +81,7 @@ class IntensityFilter:
 
     def set_input_folder(self, folder_path: str) -> bool:
         """
-        Установка входной папки (папка _cam_sorted).
+        Установка входной папки (папка cam_sorted).
 
         Args:
             folder_path: Путь к папке с отсортированными изображениями
@@ -113,10 +113,11 @@ class IntensityFilter:
         Установка порогового значения фильтрации.
 
         Args:
-            threshold: Пороговое значение (0-65535). Пиксели ниже порога → 0.
+            threshold: Пороговое значение (0-65535).
+                      Пиксели с интенсивностью ниже порога станут нулевыми.
 
         Returns:
-            bool: True если параметр валиден, False иначе
+            bool: True если значение валидно, False иначе
         """
         if not (0 <= threshold <= 65535):
             logger.error(f"Порог вне диапазона [0, 65535]: {threshold}")
@@ -129,9 +130,9 @@ class IntensityFilter:
         return True
 
     def _update_output_folder(self) -> None:
-        """Обновление пути выходной папки на основе порога."""
+        """Обновление пути выходной папки на основе порогового значения."""
         if self.input_folder is not None:
-            output_name = f"intensity_filtered_{self.threshold}"
+            output_name = f"_intensity_filtered_{self.threshold}"
             self.output_folder = self.input_folder / output_name
             logger.info(f"Выходная папка: {self.output_folder}")
 
@@ -183,7 +184,7 @@ class IntensityFilter:
         """
         Применение фильтра к изображению.
 
-        Пиксели со значением ниже порога приравниваются к нулю.
+        Все пиксели с интенсивностью ниже порога становятся нулевыми.
 
         Args:
             image_array: Массив изображения
@@ -218,7 +219,7 @@ class IntensityFilter:
 
     def get_image_statistics(self, image_path: Path) -> Optional[ImageStatistics]:
         """
-        Получение статистики изображения для GUI.
+        Получение статистики изображения.
 
         Args:
             image_path: Путь к изображению
@@ -484,33 +485,3 @@ class IntensityFilter:
             output_folder=str(self.output_folder),
             threshold=self.threshold
         )
-
-    def suggest_threshold(self, camera_name: str) -> Dict[str, any]:
-        """
-        Автоматический подбор порогового значения на основе статистики.
-
-        Args:
-            camera_name: Название камеры
-
-        Returns:
-            Словарь с рекомендуемым порогом и статистикой
-        """
-        stats = self.get_camera_statistics(camera_name, sample_size=10)
-
-        if stats is None:
-            return {'threshold': 1000, 'method': 'default'}
-
-        suggested_threshold = max(0, int(stats.mean_value - stats.std_value))
-
-        logger.info(f"Рекомендуемый порог для {camera_name}: {suggested_threshold}")
-
-        return {
-            'threshold': suggested_threshold,
-            'method': 'mean_minus_std',
-            'statistics': {
-                'mean': stats.mean_value,
-                'std': stats.std_value,
-                'min': stats.min_value,
-                'max': stats.max_value
-            }
-        }
