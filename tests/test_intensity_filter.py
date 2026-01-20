@@ -243,7 +243,7 @@ class TestIntensityFilter:
         """Тест полной обработки всех изображений."""
         intensity_filter = IntensityFilter()
         intensity_filter.set_input_folder(str(self.test_data_path))
-        intensity_filter.set_threshold(1000)
+        intensity_filter.set_threshold(3240)
 
         progress_messages = []
 

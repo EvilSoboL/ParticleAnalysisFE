@@ -1,14 +1,15 @@
 """
-Модуль фильтрации изображений по интенсивности для GUI приложения ParticleAnalysis.
+Модуль бинаризации изображений для GUI приложения ParticleAnalysis.
 
 Этот модуль предназначен для интеграции с графическим интерфейсом и предоставляет:
-- Фильтрацию по минимальному пороговому значению (ниже порога = 0)
+- Бинаризацию 16-битных изображений по пороговому значению
+- Преобразование в формат 0/255 для последующего PTV анализа
 - Callback функции для отслеживания прогресса
 - Методы для предварительного просмотра результатов
 - Пошаговую обработку с возможностью отмены
 
 Автор: ParticleAnalysis Team
-Версия: 2.0
+Версия: 1.0
 """
 
 import numpy as np
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class FilterProgress:
+class BinarizationProgress:
     """Класс для передачи информации о прогрессе обработки."""
     current_file: str
     total_files: int
@@ -38,8 +39,8 @@ class FilterProgress:
 
 
 @dataclass
-class FilterResult:
-    """Результат фильтрации."""
+class BinarizationResult:
+    """Результат бинаризации."""
     success: bool
     total_processed: int
     cam1_processed: int
@@ -61,23 +62,36 @@ class ImageStatistics:
     total_pixels: int
 
 
-class IntensityFilter:
-    """
-    Класс для фильтрации изображений по интенсивности с поддержкой GUI.
+@dataclass
+class BinarizationStatistics:
+    """Статистика бинаризации."""
+    white_pixels: int
+    black_pixels: int
+    total_pixels: int
+    white_percentage: float
+    black_percentage: float
 
-    Фильтрация выполняется по минимальному пороговому значению:
-    все пиксели с интенсивностью ниже порога приравниваются к нулю.
+
+class BinarizationFilter:
+    """
+    Класс для бинаризации изображений с поддержкой GUI.
+
+    Бинаризация выполняется по пороговому значению:
+    - Пиксели с интенсивностью >= порога → белые (255)
+    - Пиксели с интенсивностью < порога → черные (0)
+
+    Выходные изображения сохраняются в 8-битном формате PNG.
     """
 
     def __init__(self):
-        """Инициализация модуля фильтрации."""
+        """Инициализация модуля бинаризации."""
         self.input_folder: Optional[Path] = None
         self.output_folder: Optional[Path] = None
-        self.threshold: int = 3240
+        self.threshold: int = 10_000
         self._cancel_requested: bool = False
-        self._progress_callback: Optional[Callable[[FilterProgress], None]] = None
+        self._progress_callback: Optional[Callable[[BinarizationProgress], None]] = None
 
-        logger.info("Инициализирован модуль фильтрации по интенсивности")
+        logger.info("Инициализирован модуль бинаризации")
 
     def set_input_folder(self, folder_path: str) -> bool:
         """
@@ -110,11 +124,12 @@ class IntensityFilter:
 
     def set_threshold(self, threshold: int) -> bool:
         """
-        Установка порогового значения фильтрации.
+        Установка порогового значения бинаризации.
 
         Args:
             threshold: Пороговое значение (0-65535).
-                      Пиксели с интенсивностью ниже порога станут нулевыми.
+                      Пиксели >= порога → белые (255)
+                      Пиксели < порога → черные (0)
 
         Returns:
             bool: True если значение валидно, False иначе
@@ -126,22 +141,22 @@ class IntensityFilter:
         self.threshold = threshold
         self._update_output_folder()
 
-        logger.info(f"Установлен порог фильтрации: {threshold}")
+        logger.info(f"Установлен порог бинаризации: {threshold}")
         return True
 
     def _update_output_folder(self) -> None:
         """Обновление пути выходной папки на основе порогового значения."""
         if self.input_folder is not None:
-            output_name = f"intensity_filtered_{self.threshold}"
+            output_name = f"binary_filter_{self.threshold}"
             self.output_folder = self.input_folder / output_name
             logger.info(f"Выходная папка: {self.output_folder}")
 
-    def set_progress_callback(self, callback: Callable[[FilterProgress], None]) -> None:
+    def set_progress_callback(self, callback: Callable[[BinarizationProgress], None]) -> None:
         """
         Установка callback функции для отслеживания прогресса.
 
         Args:
-            callback: Функция, принимающая FilterProgress
+            callback: Функция, принимающая BinarizationProgress
         """
         self._progress_callback = callback
         logger.debug("Установлен callback для прогресса")
@@ -180,29 +195,28 @@ class IntensityFilter:
             logger.error(f"Ошибка загрузки {image_path.name}: {e}")
             return None
 
-    def _apply_filter(self, image_array: np.ndarray) -> np.ndarray:
+    def _apply_binarization(self, image_array: np.ndarray) -> np.ndarray:
         """
-        Применение фильтра к изображению.
+        Применение бинаризации к изображению.
 
-        Все пиксели с интенсивностью ниже порога становятся нулевыми.
+        Пиксели >= порога → 255 (белые)
+        Пиксели < порога → 0 (черные)
 
         Args:
-            image_array: Массив изображения
+            image_array: Массив 16-битного изображения
 
         Returns:
-            Отфильтрованный массив
+            Бинаризованный 8-битный массив (0 или 255)
         """
-        filtered = image_array.copy()
-        mask = filtered < self.threshold
-        filtered[mask] = 0
-        return filtered
+        binary = np.where(image_array >= self.threshold, 255, 0).astype(np.uint8)
+        return binary
 
-    def _save_16bit_image(self, image_array: np.ndarray, output_path: Path) -> bool:
+    def _save_8bit_image(self, image_array: np.ndarray, output_path: Path) -> bool:
         """
-        Сохранение 16-битного PNG изображения.
+        Сохранение 8-битного PNG изображения.
 
         Args:
-            image_array: Массив изображения
+            image_array: Массив изображения (8-бит)
             output_path: Путь для сохранения
 
         Returns:
@@ -210,7 +224,7 @@ class IntensityFilter:
         """
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            img = Image.fromarray(image_array, mode='I;16')
+            img = Image.fromarray(image_array, mode='L')
             img.save(output_path)
             return True
         except Exception as e:
@@ -301,49 +315,75 @@ class IntensityFilter:
             total_pixels=len(png_files) * all_values.size
         )
 
-    def preview_filter(self, image_path: Path) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    def preview_binarization(self, image_path: Path) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """
-        Предварительный просмотр фильтрации для одного изображения.
+        Предварительный просмотр бинаризации для одного изображения.
 
         Args:
             image_path: Путь к изображению
 
         Returns:
-            Tuple[original, filtered] или None
+            Tuple[original, binarized] или None
         """
         original = self._load_16bit_image(image_path)
 
         if original is None:
             return None
 
-        filtered = self._apply_filter(original)
+        binarized = self._apply_binarization(original)
 
-        return (original, filtered)
+        return (original, binarized)
+
+    def get_binarization_statistics(self, original: np.ndarray,
+                                    binarized: np.ndarray) -> BinarizationStatistics:
+        """
+        Получение статистики бинаризации.
+
+        Args:
+            original: Оригинальное 16-битное изображение
+            binarized: Бинаризованное 8-битное изображение
+
+        Returns:
+            BinarizationStatistics со статистикой
+        """
+        total_pixels = binarized.size
+        white_pixels = np.count_nonzero(binarized)
+        black_pixels = total_pixels - white_pixels
+
+        white_percentage = (white_pixels / total_pixels) * 100 if total_pixels > 0 else 0
+        black_percentage = (black_pixels / total_pixels) * 100 if total_pixels > 0 else 0
+
+        return BinarizationStatistics(
+            white_pixels=white_pixels,
+            black_pixels=black_pixels,
+            total_pixels=total_pixels,
+            white_percentage=white_percentage,
+            black_percentage=black_percentage
+        )
 
     def get_preview_statistics(self, original: np.ndarray,
-                               filtered: np.ndarray) -> Dict[str, any]:
+                               binarized: np.ndarray) -> Dict[str, any]:
         """
-        Получение статистики для предварительного просмотра.
+        Получение статистики для предварительного просмотра (совместимость с GUI).
 
         Args:
             original: Оригинальное изображение
-            filtered: Отфильтрованное изображение
+            binarized: Бинаризованное изображение
 
         Returns:
             Словарь со статистикой
         """
+        stats = self.get_binarization_statistics(original, binarized)
         original_nonzero = np.count_nonzero(original)
-        filtered_nonzero = np.count_nonzero(filtered)
-        removed_pixels = original_nonzero - filtered_nonzero
-        removal_percentage = (removed_pixels / original.size) * 100 if original.size > 0 else 0
 
         return {
             'original_nonzero': original_nonzero,
-            'filtered_nonzero': filtered_nonzero,
-            'removed_pixels': removed_pixels,
-            'removal_percentage': removal_percentage,
-            'total_pixels': original.size,
-            'kept_percentage': 100 - removal_percentage
+            'white_pixels': stats.white_pixels,
+            'black_pixels': stats.black_pixels,
+            'white_percentage': stats.white_percentage,
+            'black_percentage': stats.black_percentage,
+            'total_pixels': stats.total_pixels,
+            'threshold': self.threshold
         }
 
     def process_camera(self, camera_name: str) -> Tuple[int, List[str]]:
@@ -383,13 +423,13 @@ class IntensityFilter:
                 break
 
             if self._progress_callback:
-                progress = FilterProgress(
+                progress = BinarizationProgress(
                     current_file=img_path.name,
                     total_files=total_files,
                     processed_files=idx,
                     current_camera=camera_name,
                     percentage=(idx / total_files) * 100,
-                    message=f"Обработка {camera_name}: {img_path.name}"
+                    message=f"Бинаризация {camera_name}: {img_path.name}"
                 )
                 self._progress_callback(progress)
 
@@ -399,16 +439,16 @@ class IntensityFilter:
                 errors.append(f"Ошибка загрузки: {img_path.name}")
                 continue
 
-            filtered = self._apply_filter(img_array)
+            binarized = self._apply_binarization(img_array)
             output_path = camera_output / img_path.name
 
-            if self._save_16bit_image(filtered, output_path):
+            if self._save_8bit_image(binarized, output_path):
                 processed += 1
             else:
                 errors.append(f"Ошибка сохранения: {img_path.name}")
 
         if self._progress_callback and not self._cancel_requested:
-            progress = FilterProgress(
+            progress = BinarizationProgress(
                 current_file="",
                 total_files=total_files,
                 processed_files=total_files,
@@ -420,15 +460,15 @@ class IntensityFilter:
 
         return processed, errors
 
-    def process_all(self) -> FilterResult:
+    def process_all(self) -> BinarizationResult:
         """
         Обработка всех изображений с отслеживанием прогресса.
 
         Returns:
-            FilterResult с результатами обработки
+            BinarizationResult с результатами обработки
         """
         if self.input_folder is None:
-            return FilterResult(
+            return BinarizationResult(
                 success=False,
                 total_processed=0,
                 cam1_processed=0,
@@ -441,10 +481,12 @@ class IntensityFilter:
         self._update_output_folder()
 
         logger.info("=" * 60)
-        logger.info("НАЧАЛО ФИЛЬТРАЦИИ ПО ИНТЕНСИВНОСТИ")
+        logger.info("НАЧАЛО БИНАРИЗАЦИИ")
         logger.info(f"Входная папка: {self.input_folder}")
         logger.info(f"Выходная папка: {self.output_folder}")
         logger.info(f"Порог: {self.threshold}")
+        logger.info("Пиксели >= порога → 255 (белые)")
+        logger.info("Пиксели < порога → 0 (черные)")
         logger.info("=" * 60)
 
         self._cancel_requested = False
@@ -464,7 +506,7 @@ class IntensityFilter:
         success = not self._cancel_requested and len(all_errors) == 0
 
         logger.info("\n" + "=" * 60)
-        logger.info("РЕЗУЛЬТАТЫ ФИЛЬТРАЦИИ")
+        logger.info("РЕЗУЛЬТАТЫ БИНАРИЗАЦИИ")
         logger.info("=" * 60)
         logger.info(f"cam_1: обработано {cam1_processed}, ошибок: {len(cam1_errors)}")
         logger.info(f"cam_2: обработано {cam2_processed}, ошибок: {len(cam2_errors)}")
@@ -476,7 +518,7 @@ class IntensityFilter:
 
         logger.info("=" * 60)
 
-        return FilterResult(
+        return BinarizationResult(
             success=success,
             total_processed=total_processed,
             cam1_processed=cam1_processed,
