@@ -253,7 +253,7 @@ class TestPTVVisualizer:
         return passed
 
     def test_visualization_draws_markers(self) -> bool:
-        """Тест что визуализация рисует точки и линии."""
+        """Тест что визуализация рисует окружности и линии."""
         visualizer = PTVVisualizer()
         # Дефолтные цвета: A=зелёный, B=красный, линия=оранжевый
 
@@ -267,16 +267,17 @@ class TestPTVVisualizer:
 
         vis_image = visualizer.create_visualization(original, pairs)
 
-        # Проверяем наличие зелёной точки (частица A) в позиции (50, 50)
-        has_green = vis_image[50, 50, 1] > 200  # Зелёный канал
-        # Проверяем наличие красной точки (частица B) в позиции (100, 100)
-        has_red = vis_image[100, 100, 2] > 200  # Красный канал
+        # Проверяем наличие зелёной окружности (частица A) вокруг позиции (50, 50)
+        # Радиус = 4, проверяем пиксели на окружности
+        has_green = vis_image[50, 54, 1] > 200 or vis_image[54, 50, 1] > 200  # Зелёный канал
+        # Проверяем наличие красной окружности (частица B) вокруг позиции (100, 100)
+        has_red = vis_image[100, 104, 2] > 200 or vis_image[104, 100, 2] > 200  # Красный канал
         # Проверяем наличие оранжевой линии (R и G каналы)
         has_line = np.any((vis_image[:, :, 2] > 150) & (vis_image[:, :, 1] > 100))
 
         passed = has_green and has_red and has_line
         self._log_result("test_visualization_draws_markers", passed,
-                        f"Зелёная точка: {has_green}, Красная точка: {has_red}, Линия: {has_line}")
+                        f"Зелёная окружность: {has_green}, Красная окружность: {has_red}, Линия: {has_line}")
         return passed
 
     def test_visualization_no_line_for_zero_displacement(self) -> bool:
@@ -293,11 +294,11 @@ class TestPTVVisualizer:
 
         vis_image = visualizer.create_visualization(original, pairs)
 
-        # Проверяем наличие точки (зелёная и красная в одном месте)
-        # При нулевом смещении обе точки в позиции (50, 50)
-        has_point = vis_image[50, 50, 1] > 0 or vis_image[50, 50, 2] > 0  # Зелёный или красный
+        # Проверяем наличие окружности (зелёная и красная в одном месте)
+        # При нулевом смещении обе окружности в позиции (50, 50), радиус = 4
+        has_circle = vis_image[50, 54, 1] > 0 or vis_image[54, 50, 2] > 0  # Зелёный или красный
 
-        passed = has_point  # Точки должны быть
+        passed = has_circle  # Окружности должны быть
         self._log_result("test_visualization_no_line_for_zero_displacement", passed)
         return passed
 
