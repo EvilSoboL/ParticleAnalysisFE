@@ -57,9 +57,9 @@ class VisualizationProgress:
 @dataclass
 class VisualizationConfig:
     """Конфигурация визуализации."""
-    particle_a_color: Tuple[int, int, int] = (0, 0, 255)  # Красный (BGR) - частицы кадра A
-    particle_b_color: Tuple[int, int, int] = (255, 0, 0)  # Синий (BGR) - частицы кадра B
-    line_color: Tuple[int, int, int] = (255, 0, 0)  # Синий (BGR) - линии связи
+    particle_a_color: Tuple[int, int, int] = (0, 255, 0)  # Зелёный (BGR) - частицы кадра A
+    particle_b_color: Tuple[int, int, int] = (0, 0, 255)  # Красный (BGR) - частицы кадра B
+    line_color: Tuple[int, int, int] = (0, 165, 255)  # Оранжевый (BGR) - линии связи
     line_thickness: int = 1  # Толщина линии
 
 
@@ -160,17 +160,17 @@ class PTVVisualizer:
             logger.info(f"Выходная папка визуализаций: {self.output_folder}")
 
     def set_visualization_config(self,
-                                  particle_a_color: Tuple[int, int, int] = (0, 0, 255),
-                                  particle_b_color: Tuple[int, int, int] = (255, 0, 0),
-                                  line_color: Tuple[int, int, int] = (255, 0, 0),
+                                  particle_a_color: Tuple[int, int, int] = (0, 255, 0),
+                                  particle_b_color: Tuple[int, int, int] = (0, 0, 255),
+                                  line_color: Tuple[int, int, int] = (0, 165, 255),
                                   line_thickness: int = 1) -> None:
         """
         Установка параметров визуализации.
 
         Args:
-            particle_a_color: Цвет частиц кадра A (BGR) - по умолчанию красный
-            particle_b_color: Цвет частиц кадра B (BGR) - по умолчанию синий
-            line_color: Цвет соединительных линий (BGR) - по умолчанию синий
+            particle_a_color: Цвет частиц кадра A (BGR) - по умолчанию зелёный
+            particle_b_color: Цвет частиц кадра B (BGR) - по умолчанию красный
+            line_color: Цвет соединительных линий (BGR) - по умолчанию оранжевый
             line_thickness: Толщина линии
         """
         self.config = VisualizationConfig(
@@ -276,9 +276,9 @@ class PTVVisualizer:
         Создание визуализации сопоставления на исходном изображении.
 
         На изображение накладываются:
-        - Красные точки (1 пиксель): центры частиц в кадре A (X0, Y0)
-        - Синие точки (1 пиксель): центры частиц в кадре B (X0+dx, Y0+dy)
-        - Синие линии: соединяют сопоставленные пары
+        - Зелёные точки (1 пиксель): центры частиц в кадре A (X0, Y0)
+        - Красные точки (1 пиксель): центры частиц в кадре B (X0+dx, Y0+dy)
+        - Оранжевые линии: соединяют сопоставленные пары
 
         Args:
             original_image: Исходное изображение (BGR)
