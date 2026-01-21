@@ -57,13 +57,10 @@ class VisualizationProgress:
 @dataclass
 class VisualizationConfig:
     """Конфигурация визуализации."""
-    particle_a_color: Tuple[int, int, int] = (0, 255, 0)  # Зелёный (BGR) - частицы кадра A
-    particle_b_color: Tuple[int, int, int] = (0, 0, 255)  # Красный (BGR) - частицы кадра B
-    line_color: Tuple[int, int, int] = (0, 255, 255)  # Жёлтый (BGR) - линии связи
-    particle_radius: int = 5  # Радиус маркера частицы
+    particle_a_color: Tuple[int, int, int] = (0, 0, 255)  # Красный (BGR) - частицы кадра A
+    particle_b_color: Tuple[int, int, int] = (255, 0, 0)  # Синий (BGR) - частицы кадра B
+    line_color: Tuple[int, int, int] = (255, 0, 0)  # Синий (BGR) - линии связи
     line_thickness: int = 1  # Толщина линии
-    marker_thickness: int = 2  # Толщина маркера (-1 для заливки)
-    draw_unmatched: bool = False  # Рисовать ли несопоставленные частицы
 
 
 @dataclass
@@ -163,30 +160,24 @@ class PTVVisualizer:
             logger.info(f"Выходная папка визуализаций: {self.output_folder}")
 
     def set_visualization_config(self,
-                                  particle_a_color: Tuple[int, int, int] = (0, 255, 0),
-                                  particle_b_color: Tuple[int, int, int] = (0, 0, 255),
-                                  line_color: Tuple[int, int, int] = (0, 255, 255),
-                                  particle_radius: int = 5,
-                                  line_thickness: int = 1,
-                                  marker_thickness: int = 2) -> None:
+                                  particle_a_color: Tuple[int, int, int] = (0, 0, 255),
+                                  particle_b_color: Tuple[int, int, int] = (255, 0, 0),
+                                  line_color: Tuple[int, int, int] = (255, 0, 0),
+                                  line_thickness: int = 1) -> None:
         """
         Установка параметров визуализации.
 
         Args:
-            particle_a_color: Цвет частиц кадра A (BGR)
-            particle_b_color: Цвет частиц кадра B (BGR)
-            line_color: Цвет соединительных линий (BGR)
-            particle_radius: Радиус маркера частицы
+            particle_a_color: Цвет частиц кадра A (BGR) - по умолчанию красный
+            particle_b_color: Цвет частиц кадра B (BGR) - по умолчанию синий
+            line_color: Цвет соединительных линий (BGR) - по умолчанию синий
             line_thickness: Толщина линии
-            marker_thickness: Толщина маркера
         """
         self.config = VisualizationConfig(
             particle_a_color=particle_a_color,
             particle_b_color=particle_b_color,
             line_color=line_color,
-            particle_radius=particle_radius,
-            line_thickness=line_thickness,
-            marker_thickness=marker_thickness
+            line_thickness=line_thickness
         )
         logger.info("Обновлены параметры визуализации")
 
@@ -285,9 +276,9 @@ class PTVVisualizer:
         Создание визуализации сопоставления на исходном изображении.
 
         На изображение накладываются:
-        - Зелёные маркеры: центры частиц в кадре A (X0, Y0)
-        - Красные маркеры: центры частиц в кадре B (X0+dx, Y0+dy)
-        - Жёлтые линии: соединяют сопоставленные пары
+        - Красные точки (1 пиксель): центры частиц в кадре A (X0, Y0)
+        - Синие точки (1 пиксель): центры частиц в кадре B (X0+dx, Y0+dy)
+        - Синие линии: соединяют сопоставленные пары
 
         Args:
             original_image: Исходное изображение (BGR)
@@ -298,29 +289,33 @@ class PTVVisualizer:
         """
         vis_image = original_image.copy()
         cfg = self.config
+        h, w = vis_image.shape[:2]
 
         # Рисуем линии связи
         for pair in pairs:
             # Координаты частицы A
-            pt_a = (int(round(pair.x0)), int(round(pair.y0)))
+            x_a, y_a = int(round(pair.x0)), int(round(pair.y0))
             # Координаты частицы B (смещённая позиция)
-            pt_b = (int(round(pair.x0 + pair.dx)), int(round(pair.y0 + pair.dy)))
+            x_b, y_b = int(round(pair.x0 + pair.dx)), int(round(pair.y0 + pair.dy))
 
             # Рисуем линию только если есть смещение
             if pair.dx != 0 or pair.dy != 0:
-                cv2.line(vis_image, pt_a, pt_b, cfg.line_color, cfg.line_thickness)
+                cv2.line(vis_image, (x_a, y_a), (x_b, y_b),
+                        cfg.line_color, cfg.line_thickness)
 
-        # Рисуем маркеры частиц A (зелёные)
+        # Рисуем точки частиц A (красные, 1 пиксель)
         for pair in pairs:
-            pt_a = (int(round(pair.x0)), int(round(pair.y0)))
-            cv2.circle(vis_image, pt_a, cfg.particle_radius,
-                      cfg.particle_a_color, cfg.marker_thickness)
+            x, y = int(round(pair.x0)), int(round(pair.y0))
+            # Проверка границ изображения
+            if 0 <= x < w and 0 <= y < h:
+                vis_image[y, x] = cfg.particle_a_color
 
-        # Рисуем маркеры частиц B (красные)
+        # Рисуем точки частиц B (синие, 1 пиксель)
         for pair in pairs:
-            pt_b = (int(round(pair.x0 + pair.dx)), int(round(pair.y0 + pair.dy)))
-            cv2.circle(vis_image, pt_b, cfg.particle_radius,
-                      cfg.particle_b_color, cfg.marker_thickness)
+            x, y = int(round(pair.x0 + pair.dx)), int(round(pair.y0 + pair.dy))
+            # Проверка границ изображения
+            if 0 <= x < w and 0 <= y < h:
+                vis_image[y, x] = cfg.particle_b_color
 
         return vis_image
 

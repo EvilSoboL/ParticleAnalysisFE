@@ -143,20 +143,18 @@ class TestPTVVisualizer:
         """Тест конфигурации визуализации."""
         visualizer = PTVVisualizer()
         visualizer.set_visualization_config(
-            particle_a_color=(255, 0, 0),
-            particle_b_color=(0, 255, 0),
-            line_color=(0, 0, 255),
-            particle_radius=10,
-            line_thickness=3
+            particle_a_color=(0, 0, 255),  # Красный
+            particle_b_color=(255, 0, 0),  # Синий
+            line_color=(255, 0, 0),  # Синий
+            line_thickness=2
         )
 
         cfg = visualizer.config
         passed = (
-            cfg.particle_a_color == (255, 0, 0) and
-            cfg.particle_b_color == (0, 255, 0) and
-            cfg.line_color == (0, 0, 255) and
-            cfg.particle_radius == 10 and
-            cfg.line_thickness == 3
+            cfg.particle_a_color == (0, 0, 255) and
+            cfg.particle_b_color == (255, 0, 0) and
+            cfg.line_color == (255, 0, 0) and
+            cfg.line_thickness == 2
         )
         self._log_result("test_visualization_config", passed)
         return passed
@@ -255,14 +253,9 @@ class TestPTVVisualizer:
         return passed
 
     def test_visualization_draws_markers(self) -> bool:
-        """Тест что визуализация рисует маркеры и линии."""
+        """Тест что визуализация рисует точки и линии."""
         visualizer = PTVVisualizer()
-        visualizer.set_visualization_config(
-            particle_a_color=(0, 255, 0),
-            particle_b_color=(0, 0, 255),
-            line_color=(0, 255, 255),
-            particle_radius=10
-        )
+        # Дефолтные цвета: A=красный, B=синий, линия=синий
 
         # Чёрное изображение для легкой проверки
         original = np.zeros((200, 200, 3), dtype=np.uint8)
@@ -274,27 +267,21 @@ class TestPTVVisualizer:
 
         vis_image = visualizer.create_visualization(original, pairs)
 
-        # Проверяем наличие зелёного (частица A)
-        has_green = np.any(vis_image[40:60, 40:60, 1] > 200)
-        # Проверяем наличие красного (частица B в позиции 100, 100)
-        has_red = np.any(vis_image[90:110, 90:110, 2] > 200)
-        # Проверяем наличие жёлтого (линия)
-        has_yellow = np.any((vis_image[:, :, 1] > 200) & (vis_image[:, :, 2] > 200))
+        # Проверяем наличие красной точки (частица A) в позиции (50, 50)
+        has_red = vis_image[50, 50, 2] > 200  # Красный канал
+        # Проверяем наличие синей точки (частица B) в позиции (100, 100)
+        has_blue = vis_image[100, 100, 0] > 200  # Синий канал
+        # Проверяем наличие синей линии
+        has_line = np.any(vis_image[:, :, 0] > 200)  # Синий канал
 
-        passed = has_green and has_red and has_yellow
+        passed = has_red and has_blue and has_line
         self._log_result("test_visualization_draws_markers", passed,
-                        f"Зелёный: {has_green}, Красный: {has_red}, Жёлтый: {has_yellow}")
+                        f"Красная точка: {has_red}, Синяя точка: {has_blue}, Линия: {has_line}")
         return passed
 
     def test_visualization_no_line_for_zero_displacement(self) -> bool:
         """Тест что не рисуется линия при нулевом смещении."""
         visualizer = PTVVisualizer()
-        visualizer.set_visualization_config(
-            particle_a_color=(0, 255, 0),
-            particle_b_color=(0, 0, 255),
-            line_color=(255, 0, 0),  # Синий для линии
-            particle_radius=5
-        )
 
         original = np.zeros((100, 100, 3), dtype=np.uint8)
 
@@ -306,12 +293,11 @@ class TestPTVVisualizer:
 
         vis_image = visualizer.create_visualization(original, pairs)
 
-        # Проверяем отсутствие синей линии (кроме области маркеров)
-        # Линия не должна рисоваться при нулевом смещении
-        # Маркеры A и B будут в одной точке
-        has_markers = np.any(vis_image[45:55, 45:55, 1] > 200)  # Зелёный
+        # Проверяем наличие точки (красная и синяя в одном месте)
+        # При нулевом смещении обе точки в позиции (50, 50)
+        has_point = vis_image[50, 50, 0] > 0 or vis_image[50, 50, 2] > 0
 
-        passed = has_markers  # Маркеры должны быть
+        passed = has_point  # Точки должны быть
         self._log_result("test_visualization_no_line_for_zero_displacement", passed)
         return passed
 
