@@ -276,8 +276,8 @@ class PTVVisualizer:
         Создание визуализации сопоставления на исходном изображении.
 
         На изображение накладываются:
-        - Зелёные точки (1 пиксель): центры частиц в кадре A (X0, Y0)
-        - Красные точки (1 пиксель): центры частиц в кадре B (X0+dx, Y0+dy)
+        - Зелёные окружности: частицы в кадре A (X0, Y0), диаметр из CSV
+        - Красные окружности: частицы в кадре B (X0+dx, Y0+dy), диаметр из CSV
         - Оранжевые линии: соединяют сопоставленные пары
 
         Args:
@@ -303,19 +303,21 @@ class PTVVisualizer:
                 cv2.line(vis_image, (x_a, y_a), (x_b, y_b),
                         cfg.line_color, cfg.line_thickness)
 
-        # Рисуем точки частиц A (красные, 1 пиксель)
+        # Рисуем окружности частиц A (зелёные, незакрашенные)
         for pair in pairs:
             x, y = int(round(pair.x0)), int(round(pair.y0))
-            # Проверка границ изображения
+            radius = max(1, int(round(pair.diameter / 2)))
+            # Проверка границ изображения (центр окружности)
             if 0 <= x < w and 0 <= y < h:
-                vis_image[y, x] = cfg.particle_a_color
+                cv2.circle(vis_image, (x, y), radius, cfg.particle_a_color, 1)
 
-        # Рисуем точки частиц B (синие, 1 пиксель)
+        # Рисуем окружности частиц B (красные, незакрашенные)
         for pair in pairs:
             x, y = int(round(pair.x0 + pair.dx)), int(round(pair.y0 + pair.dy))
-            # Проверка границ изображения
+            radius = max(1, int(round(pair.diameter / 2)))
+            # Проверка границ изображения (центр окружности)
             if 0 <= x < w and 0 <= y < h:
-                vis_image[y, x] = cfg.particle_b_color
+                cv2.circle(vis_image, (x, y), radius, cfg.particle_b_color, 1)
 
         return vis_image
 
