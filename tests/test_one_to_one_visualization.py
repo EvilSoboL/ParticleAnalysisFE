@@ -132,7 +132,7 @@ class TestPTVVisualizer:
         visualizer = PTVVisualizer()
         visualizer.set_ptv_folder(str(self.ptv_folder))
 
-        expected_path = self.ptv_folder / "visualization"
+        expected_path = self.ptv_folder / "one_to_one_visualization"
 
         passed = visualizer.output_folder == expected_path
         message = f"Ожидалось: {expected_path}, получено: {visualizer.output_folder}"
@@ -152,11 +152,11 @@ class TestPTVVisualizer:
 
         cfg = visualizer.config
         passed = (
-                cfg.particle_a_color == (255, 0, 0) and
-                cfg.particle_b_color == (0, 255, 0) and
-                cfg.line_color == (0, 0, 255) and
-                cfg.particle_radius == 10 and
-                cfg.line_thickness == 3
+            cfg.particle_a_color == (255, 0, 0) and
+            cfg.particle_b_color == (0, 255, 0) and
+            cfg.line_color == (0, 0, 255) and
+            cfg.particle_radius == 10 and
+            cfg.line_thickness == 3
         )
         self._log_result("test_visualization_config", passed)
         return passed
@@ -175,11 +175,11 @@ class TestPTVVisualizer:
         img = visualizer._load_original_image(png_files[0])
 
         passed = (
-                img is not None and
-                isinstance(img, np.ndarray) and
-                img.dtype == np.uint8 and
-                len(img.shape) == 3 and  # BGR
-                img.shape[2] == 3
+            img is not None and
+            isinstance(img, np.ndarray) and
+            img.dtype == np.uint8 and
+            len(img.shape) == 3 and  # BGR
+            img.shape[2] == 3
         )
         self._log_result("test_load_original_image", passed)
         return passed
@@ -205,27 +205,27 @@ class TestPTVVisualizer:
         pairs = visualizer._load_pairs_csv(csv_files[0])
 
         passed = (
-                isinstance(pairs, list) and
-                len(pairs) > 0 and
-                all(isinstance(p, MatchedPair) for p in pairs)
+            isinstance(pairs, list) and
+            len(pairs) > 0 and
+            all(isinstance(p, MatchedPair) for p in pairs)
         )
 
         if passed:
             # Проверяем атрибуты первой пары
             p = pairs[0]
             passed = (
-                    hasattr(p, 'id') and
-                    hasattr(p, 'x0') and
-                    hasattr(p, 'y0') and
-                    hasattr(p, 'dx') and
-                    hasattr(p, 'dy') and
-                    hasattr(p, 'length') and
-                    hasattr(p, 'diameter') and
-                    hasattr(p, 'area')
+                hasattr(p, 'id') and
+                hasattr(p, 'x0') and
+                hasattr(p, 'y0') and
+                hasattr(p, 'dx') and
+                hasattr(p, 'dy') and
+                hasattr(p, 'length') and
+                hasattr(p, 'diameter') and
+                hasattr(p, 'area')
             )
 
         self._log_result("test_load_pairs_csv", passed,
-                         f"Загружено пар: {len(pairs)}" if pairs else "")
+                        f"Загружено пар: {len(pairs)}" if pairs else "")
         return passed
 
     def test_create_visualization(self) -> bool:
@@ -238,17 +238,17 @@ class TestPTVVisualizer:
         # Создаем тестовые пары
         pairs = [
             MatchedPair(id=1, x0=100.0, y0=100.0, dx=20.0, dy=10.0,
-                        length=22.36, diameter=8.0, area=50),
+                       length=22.36, diameter=8.0, area=50),
             MatchedPair(id=2, x0=300.0, y0=300.0, dx=-15.0, dy=25.0,
-                        length=29.15, diameter=10.0, area=78),
+                       length=29.15, diameter=10.0, area=78),
         ]
 
         vis_image = visualizer.create_visualization(original, pairs)
 
         passed = (
-                vis_image is not None and
-                vis_image.shape == original.shape and
-                vis_image.dtype == np.uint8
+            vis_image is not None and
+            vis_image.shape == original.shape and
+            vis_image.dtype == np.uint8
         )
 
         self._log_result("test_create_visualization", passed)
@@ -269,7 +269,7 @@ class TestPTVVisualizer:
 
         pairs = [
             MatchedPair(id=1, x0=50.0, y0=50.0, dx=50.0, dy=50.0,
-                        length=70.71, diameter=8.0, area=50),
+                       length=70.71, diameter=8.0, area=50),
         ]
 
         vis_image = visualizer.create_visualization(original, pairs)
@@ -283,7 +283,7 @@ class TestPTVVisualizer:
 
         passed = has_green and has_red and has_yellow
         self._log_result("test_visualization_draws_markers", passed,
-                         f"Зелёный: {has_green}, Красный: {has_red}, Жёлтый: {has_yellow}")
+                        f"Зелёный: {has_green}, Красный: {has_red}, Жёлтый: {has_yellow}")
         return passed
 
     def test_visualization_no_line_for_zero_displacement(self) -> bool:
@@ -301,7 +301,7 @@ class TestPTVVisualizer:
         # Пара с нулевым смещением
         pairs = [
             MatchedPair(id=1, x0=50.0, y0=50.0, dx=0.0, dy=0.0,
-                        length=0.0, diameter=8.0, area=50),
+                       length=0.0, diameter=8.0, area=50),
         ]
 
         vis_image = visualizer.create_visualization(original, pairs)
@@ -353,8 +353,8 @@ class TestPTVVisualizer:
             shutil.rmtree(visualizer.output_folder)
 
         self._log_result("test_process_pair", passed,
-                         f"Создано визуализаций: {result['visualizations_created']}, "
-                         f"пар в CSV: {result['pairs_count']}")
+                        f"Создано визуализаций: {result['visualizations_created']}, "
+                        f"пар в CSV: {result['pairs_count']}")
         return passed
 
     def test_process_camera(self) -> bool:
@@ -382,7 +382,7 @@ class TestPTVVisualizer:
             shutil.rmtree(visualizer.output_folder)
 
         self._log_result("test_process_camera", passed,
-                         f"Пар: {pairs}, визуализаций: {vis_count}")
+                        f"Пар: {pairs}, визуализаций: {vis_count}")
         return passed
 
     def test_process_all(self) -> bool:
@@ -396,10 +396,10 @@ class TestPTVVisualizer:
         output_folder = Path(result.output_folder) if result.output_folder else None
 
         passed = (
-                result.success and
-                result.total_pairs_processed > 0 and
-                output_folder is not None and
-                output_folder.exists()
+            result.success and
+            result.total_pairs_processed > 0 and
+            output_folder is not None and
+            output_folder.exists()
         )
 
         # Проверяем что созданы файлы визуализаций
@@ -412,9 +412,9 @@ class TestPTVVisualizer:
             print(f"    Очищена выходная папка: {output_folder}")
 
         self._log_result("test_process_all", passed,
-                         f"Пар: {result.total_pairs_processed}, "
-                         f"cam1: {result.cam1_visualizations}, "
-                         f"cam2: {result.cam2_visualizations}")
+                        f"Пар: {result.total_pairs_processed}, "
+                        f"cam1: {result.cam1_visualizations}, "
+                        f"cam2: {result.cam2_visualizations}")
         return passed
 
     def test_visualization_files_naming(self) -> bool:
@@ -473,12 +473,12 @@ class TestPTVVisualizer:
         preview = visualizer.get_preview(camera_name, pair_number)
 
         passed = (
-                preview is not None and
-                len(preview) == 2 and
-                preview[0] is not None and
-                preview[1] is not None and
-                isinstance(preview[0], np.ndarray) and
-                isinstance(preview[1], np.ndarray)
+            preview is not None and
+            len(preview) == 2 and
+            preview[0] is not None and
+            preview[1] is not None and
+            isinstance(preview[0], np.ndarray) and
+            isinstance(preview[1], np.ndarray)
         )
 
         self._log_result("test_get_preview", passed)
@@ -515,15 +515,15 @@ class TestPTVVisualizer:
         stats = visualizer.get_pair_statistics(camera_name, pair_number)
 
         passed = (
-                stats is not None and
-                'pairs_count' in stats and
-                'mean_diameter' in stats and
-                stats['pairs_count'] > 0
+            stats is not None and
+            'pairs_count' in stats and
+            'mean_diameter' in stats and
+            stats['pairs_count'] > 0
         )
 
         self._log_result("test_get_pair_statistics", passed,
-                         f"Статистика: пар={stats.get('pairs_count', 0)}, "
-                         f"средний диаметр={stats.get('mean_diameter', 0):.2f}" if stats else "")
+                        f"Статистика: пар={stats.get('pairs_count', 0)}, "
+                        f"средний диаметр={stats.get('mean_diameter', 0):.2f}" if stats else "")
         return passed
 
     def test_cancel_processing(self) -> bool:

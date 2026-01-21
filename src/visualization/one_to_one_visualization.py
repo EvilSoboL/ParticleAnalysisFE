@@ -159,16 +159,16 @@ class PTVVisualizer:
     def _update_output_folder(self) -> None:
         """Обновление пути выходной папки для визуализаций."""
         if self.ptv_folder is not None:
-            self.output_folder = self.ptv_folder / "visualization"
+            self.output_folder = self.ptv_folder / "one_to_one_visualization"
             logger.info(f"Выходная папка визуализаций: {self.output_folder}")
 
     def set_visualization_config(self,
-                                 particle_a_color: Tuple[int, int, int] = (0, 255, 0),
-                                 particle_b_color: Tuple[int, int, int] = (0, 0, 255),
-                                 line_color: Tuple[int, int, int] = (0, 255, 255),
-                                 particle_radius: int = 5,
-                                 line_thickness: int = 1,
-                                 marker_thickness: int = 2) -> None:
+                                  particle_a_color: Tuple[int, int, int] = (0, 255, 0),
+                                  particle_b_color: Tuple[int, int, int] = (0, 0, 255),
+                                  line_color: Tuple[int, int, int] = (0, 255, 255),
+                                  particle_radius: int = 5,
+                                  line_thickness: int = 1,
+                                  marker_thickness: int = 2) -> None:
         """
         Установка параметров визуализации.
 
@@ -279,8 +279,8 @@ class PTVVisualizer:
         return pairs
 
     def create_visualization(self,
-                             original_image: np.ndarray,
-                             pairs: List[MatchedPair]) -> np.ndarray:
+                            original_image: np.ndarray,
+                            pairs: List[MatchedPair]) -> np.ndarray:
         """
         Создание визуализации сопоставления на исходном изображении.
 
@@ -314,13 +314,13 @@ class PTVVisualizer:
         for pair in pairs:
             pt_a = (int(round(pair.x0)), int(round(pair.y0)))
             cv2.circle(vis_image, pt_a, cfg.particle_radius,
-                       cfg.particle_a_color, cfg.marker_thickness)
+                      cfg.particle_a_color, cfg.marker_thickness)
 
         # Рисуем маркеры частиц B (красные)
         for pair in pairs:
             pt_b = (int(round(pair.x0 + pair.dx)), int(round(pair.y0 + pair.dy)))
             cv2.circle(vis_image, pt_b, cfg.particle_radius,
-                       cfg.particle_b_color, cfg.marker_thickness)
+                      cfg.particle_b_color, cfg.marker_thickness)
 
         return vis_image
 
@@ -583,7 +583,7 @@ class PTVVisualizer:
         )
 
     def get_preview(self, camera_name: str,
-                    pair_number: int) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+                   pair_number: int) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """
         Получение предварительного просмотра визуализации для GUI.
 
@@ -678,4 +678,3 @@ class PTVVisualizer:
             })
 
         return stats
-    
