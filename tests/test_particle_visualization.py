@@ -161,7 +161,6 @@ class TestParticleVisualizer:
         visualizer.set_visualization_config(
             center_color=(255, 0, 0),
             circle_color=(0, 255, 255),
-            center_radius=3,
             circle_thickness=2,
             max_images=5
         )
@@ -169,7 +168,6 @@ class TestParticleVisualizer:
         passed = (
             visualizer.config.center_color == (255, 0, 0) and
             visualizer.config.circle_color == (0, 255, 255) and
-            visualizer.config.center_radius == 3 and
             visualizer.config.circle_thickness == 2 and
             visualizer.config.max_images == 5
         )
@@ -253,7 +251,6 @@ class TestParticleVisualizer:
         visualizer.set_visualization_config(
             center_color=(0, 0, 255),
             circle_color=(0, 255, 0),
-            center_radius=2,
             circle_thickness=1
         )
 
@@ -275,11 +272,14 @@ class TestParticleVisualizer:
             np.any(result != 0)  # Должны быть ненулевые пиксели
         )
 
-        # Проверяем что центры нарисованы (красный цвет)
+        # Проверяем что центр первой частицы красный (1 пиксель)
         if passed:
-            # Проверяем наличие красного цвета в области первой частицы
-            center1_region = result[28:32, 28:32]
-            has_red = np.any(center1_region[:, :, 2] > 0)  # BGR, красный - канал 2
+            center_pixel = result[30, 30]
+            has_red = (
+                center_pixel[2] == 255 and  # R
+                center_pixel[1] == 0 and    # G
+                center_pixel[0] == 0        # B
+            )
             passed = has_red
 
         self._log_result("test_draw_particles_synthetic", passed)
@@ -291,7 +291,6 @@ class TestParticleVisualizer:
         visualizer.set_visualization_config(
             center_color=(0, 0, 255),  # Красный
             circle_color=(0, 255, 0),  # Зеленый
-            center_radius=3,
             circle_thickness=2
         )
 
@@ -308,15 +307,22 @@ class TestParticleVisualizer:
 
         result = visualizer._draw_particles(image, [particle])
 
-        # Проверяем центр (красный)
+        # Проверяем центр (красный, 1 пиксель)
         center_pixel = result[50, 50]
-        has_red_center = center_pixel[2] == 255  # BGR
+        has_red_center = (
+            center_pixel[2] == 255 and  # R
+            center_pixel[1] == 0 and    # G
+            center_pixel[0] == 0        # B
+        )
+
+        # Проверяем что соседние пиксели НЕ красные (центр = 1 пиксель)
+        neighbor_not_red = result[50, 51][2] != 255 or result[50, 51][1] != 0
 
         # Проверяем окружность (зеленый) на расстоянии радиуса
         circle_pixel = result[50, 60]  # 10 пикселей вправо от центра
         has_green_circle = circle_pixel[1] == 255  # BGR
 
-        passed = has_red_center and has_green_circle
+        passed = has_red_center and has_green_circle and neighbor_not_red
         self._log_result("test_particles_drawn_correctly", passed)
         return passed
 
@@ -402,6 +408,11 @@ class TestParticleVisualizer:
         )
         visualizer.set_visualization_config(max_images=5)  # Ограничиваем для скорости
 
+        # Очищаем выходную папку перед тестом
+        output_folder = self.binary_folder_path.parent / "particle_visualization"
+        if output_folder.exists():
+            shutil.rmtree(output_folder)
+
         progress_messages = []
 
         def progress_callback(progress: VisualizationProgress):
@@ -446,6 +457,11 @@ class TestParticleVisualizer:
             str(self.binary_folder_path),
             str(self.ptv_folder_path)
         )
+
+        # Очищаем выходную папку перед тестом
+        output_folder = self.binary_folder_path.parent / "particle_visualization"
+        if output_folder.exists():
+            shutil.rmtree(output_folder)
 
         def progress_callback(progress: VisualizationProgress):
             if progress.processed_files >= 1:
@@ -534,6 +550,11 @@ class TestParticleVisualizer:
         )
         visualizer.set_visualization_config(max_images=2)
 
+        # Очищаем выходную папку перед тестом
+        output_folder = self.binary_folder_path.parent / "particle_visualization"
+        if output_folder.exists():
+            shutil.rmtree(output_folder)
+
         result = visualizer.process_all()
 
         output_folder = Path(result.output_folder)
@@ -564,6 +585,11 @@ class TestParticleVisualizer:
             str(self.ptv_folder_path)
         )
         visualizer.set_visualization_config(max_images=3)
+
+        # Очищаем выходную папку перед тестом (могла остаться от предыдущих тестов)
+        output_folder = self.binary_folder_path.parent / "particle_visualization"
+        if output_folder.exists():
+            shutil.rmtree(output_folder)
 
         result = visualizer.process_all()
 

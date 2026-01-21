@@ -65,9 +65,8 @@ class VisualizationResult:
 class VisualizationConfig:
     """Конфигурация визуализации."""
     # Цвета в формате BGR (для OpenCV)
-    center_color: Tuple[int, int, int] = (0, 0, 255)  # Красный для центра
+    center_color: Tuple[int, int, int] = (0, 0, 255)  # Красный для центра (1 пиксель)
     circle_color: Tuple[int, int, int] = (0, 255, 0)  # Зеленый для окружности
-    center_radius: int = 2  # Радиус точки центра
     circle_thickness: int = 1  # Толщина линии окружности
     max_images: int = 10  # Максимальное количество изображений для обработки
 
@@ -152,7 +151,6 @@ class ParticleVisualizer:
         self,
         center_color: Tuple[int, int, int] = (0, 0, 255),
         circle_color: Tuple[int, int, int] = (0, 255, 0),
-        center_radius: int = 2,
         circle_thickness: int = 1,
         max_images: int = 10
     ) -> None:
@@ -160,16 +158,14 @@ class ParticleVisualizer:
         Установка параметров визуализации.
 
         Args:
-            center_color: Цвет центра частицы (BGR)
+            center_color: Цвет центра частицы (BGR), отображается как 1 пиксель
             circle_color: Цвет окружности (BGR)
-            center_radius: Радиус точки центра в пикселях
             circle_thickness: Толщина линии окружности в пикселях
             max_images: Максимальное количество изображений для обработки
         """
         self.config = VisualizationConfig(
             center_color=center_color,
             circle_color=circle_color,
-            center_radius=center_radius,
             circle_thickness=circle_thickness,
             max_images=max_images
         )
@@ -291,12 +287,12 @@ class ParticleVisualizer:
             Изображение с нарисованными частицами
         """
         result = image.copy()
+        height, width = result.shape[:2]
 
         for particle in particles:
             # Координаты центра (округляем до целых)
             center_x = int(round(particle.center_x))
             center_y = int(round(particle.center_y))
-            center = (center_x, center_y)
 
             # Радиус окружности (половина эквивалентного диаметра)
             radius = int(round(particle.diameter / 2))
@@ -304,20 +300,15 @@ class ParticleVisualizer:
             # Рисуем окружность
             cv2.circle(
                 result,
-                center,
+                (center_x, center_y),
                 radius,
                 self.config.circle_color,
                 self.config.circle_thickness
             )
 
-            # Рисуем центр (заполненный круг)
-            cv2.circle(
-                result,
-                center,
-                self.config.center_radius,
-                self.config.center_color,
-                -1  # Заполненный круг
-            )
+            # Рисуем центр (1 пиксель)
+            if 0 <= center_y < height and 0 <= center_x < width:
+                result[center_y, center_x] = self.config.center_color
 
         return result
 
@@ -600,7 +591,6 @@ class ParticleVisualizer:
             'config': {
                 'center_color': self.config.center_color,
                 'circle_color': self.config.circle_color,
-                'center_radius': self.config.center_radius,
                 'circle_thickness': self.config.circle_thickness
             }
         }
