@@ -44,8 +44,8 @@ class VectorFieldConfig:
     # Параметры quiver
     nx: int = 54  # Количество ячеек по X
     ny: int = 54  # Количество ячеек по Y
-    scale: float = 80  # Масштаб quiver (меньше = длиннее стрелки)
-    width: float = 0.003  # Толщина стрелок
+    scale: float = 20  # Масштаб quiver (меньше = длиннее стрелки)
+    width: float = 0.005  # Толщина стрелок
     cmap: str = "jet"  # Цветовая карта
     vmin: Optional[float] = None  # Минимум для colorbar
     vmax: Optional[float] = None  # Максимум для colorbar
@@ -385,9 +385,7 @@ class VectorFieldVisualizer:
             cmap=cfg.cmap,
             norm=norm,
             scale=cfg.scale,
-            width=cfg.width,
-            angles='xy',
-            scale_units='xy'
+            width=cfg.width
         )
 
         # Colorbar

@@ -135,9 +135,14 @@ class TestVectorFieldVisualizer:
         passed = (
             cfg.image_width == 1024 and
             cfg.image_height == 1024 and
-            cfg.arrow_thickness == 2 and
-            cfg.scale_factor == 1.0 and
-            cfg.draw_start_points is True
+            cfg.nx == 54 and
+            cfg.ny == 54 and
+            cfg.scale == 20 and
+            cfg.width == 0.005 and
+            cfg.cmap == "jet" and
+            cfg.show_grid is True and
+            cfg.xlabel == "r, mm" and
+            cfg.ylabel == "z, mm"
         )
 
         message = "Конфигурация по умолчанию не соответствует ожидаемой"
@@ -149,27 +154,35 @@ class TestVectorFieldVisualizer:
         visualizer = VectorFieldVisualizer()
 
         visualizer.set_config(
-            image_width=2048,
-            image_height=2048,
-            arrow_color=(255, 0, 0),
-            arrow_thickness=3,
-            scale_factor=2.0,
-            background_color=(0, 0, 0),
-            draw_start_points=False,
-            start_point_color=(255, 255, 0)
+            nx=67,
+            ny=50,
+            scale=200,
+            width=0.004,
+            cmap="viridis",
+            vmin=0,
+            vmax=10,
+            show_grid=True,
+            xlabel="X координата, мм",
+            ylabel="Y координата, мм",
+            title="Тестовое векторное поле",
+            figsize=(10, 8)
         )
 
         cfg = visualizer.config
 
         passed = (
-            cfg.image_width == 2048 and
-            cfg.image_height == 2048 and
-            cfg.arrow_color == (255, 0, 0) and
-            cfg.arrow_thickness == 3 and
-            cfg.scale_factor == 2.0 and
-            cfg.background_color == (0, 0, 0) and
-            cfg.draw_start_points is False and
-            cfg.start_point_color == (255, 255, 0)
+            cfg.nx == 67 and
+            cfg.ny == 50 and
+            cfg.scale == 200 and
+            cfg.width == 0.004 and
+            cfg.cmap == "viridis" and
+            cfg.vmin == 0 and
+            cfg.vmax == 10 and
+            cfg.show_grid is True and
+            cfg.xlabel == "X координата, мм" and
+            cfg.ylabel == "Y координата, мм" and
+            cfg.title == "Тестовое векторное поле" and
+            cfg.figsize == (10, 8)
         )
 
         message = "Конфигурация не обновилась корректно"
@@ -400,8 +413,40 @@ class TestVectorFieldVisualizer:
         self._log_result("test_get_preview_cam1", passed, message if not passed else "")
         return passed
 
+    def test_optimized_vector_field(self) -> bool:
+        """Тест создания векторного поля с оптимизированными параметрами."""
+        visualizer = VectorFieldVisualizer()
+        visualizer.set_ptv_folder(str(self.ptv_folder))
+
+        # Установка оптимизированных параметров для хорошей визуализации
+        visualizer.set_config(
+            nx=67,
+            ny=50,
+            scale=200,
+            width=0.003,
+            cmap="jet",
+            vmin=0,
+            vmax=10,
+            show_grid=True,
+            figsize=(9, 6)
+        )
+
+        # Обработка обеих камер
+        result = visualizer.process_all()
+
+        passed = result.success and (result.cam1_vectors_count > 0 or result.cam2_vectors_count > 0)
+        message = (f"cam_1: {result.cam1_vectors_count} векторов, "
+                  f"cam_2: {result.cam2_vectors_count} векторов")
+
+        self._log_result("test_optimized_vector_field", passed, message)
+
+        if passed:
+            print(f"    Векторные поля сохранены в: {result.output_folder}")
+
+        return passed
+
     def test_scale_factor(self) -> bool:
-        """Тест применения масштабного коэффициента."""
+        """Тест применения масштабного коэффициента quiver."""
         csv_path = self.ptv_folder / "cam_1_pairs_sum.csv"
         if not csv_path.exists():
             csv_path = self.ptv_folder / "cam_2_pairs_sum.csv"
@@ -413,20 +458,25 @@ class TestVectorFieldVisualizer:
         visualizer = VectorFieldVisualizer()
         visualizer.set_ptv_folder(str(self.ptv_folder))
 
-        # Тест с разными масштабами
-        scales = [0.5, 1.0, 2.0]
+        # Тест с разными масштабами quiver (меньше = длиннее стрелки)
+        scales = [10, 20, 50, 100, 200]
         passed = True
 
         for scale in scales:
-            visualizer.set_config(scale_factor=scale)
+            visualizer.set_config(scale=scale)
             vectors = visualizer._load_vectors_csv(csv_path)
-            image = visualizer.create_vector_field(vectors)
 
-            if image is None:
+            try:
+                image = visualizer.create_vector_field(vectors)
+                if image is None:
+                    passed = False
+                    break
+            except Exception as e:
+                print(f"      Ошибка при scale={scale}: {e}")
                 passed = False
                 break
 
-        message = f"Протестированы масштабы: {scales}"
+        message = f"Протестированы масштабы quiver: {scales}"
         self._log_result("test_scale_factor", passed, message if not passed else "")
         return passed
 
@@ -469,6 +519,7 @@ class TestVectorFieldVisualizer:
             self.test_get_statistics_cam1,
             self.test_get_statistics_cam2,
             self.test_get_preview_cam1,
+            self.test_optimized_vector_field,
             self.test_scale_factor,
         ]
 
