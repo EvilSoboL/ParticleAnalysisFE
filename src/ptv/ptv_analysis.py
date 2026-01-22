@@ -538,7 +538,10 @@ class PTVAnalyzer:
         Создание суммарного CSV файла со всеми парами из папки.
 
         Читает все CSV файлы из указанной папки, объединяет их в один файл
-        с перенумерацией ID.
+        с перенумерацией ID. Применяет фильтры:
+        - L > 0
+        - dy в диапазоне [-5, 5]
+        - dx в диапазоне [0, 20]
 
         Args:
             pairs_folder: Папка с CSV файлами пар (например, cam_1_pairs)
@@ -561,6 +564,7 @@ class PTVAnalyzer:
 
             all_pairs_data = []
             pair_id = 1
+            filtered_count = 0
 
             # Чтение всех файлов пар
             for pair_file in pair_files:
@@ -571,10 +575,27 @@ class PTVAnalyzer:
 
                         for row in reader:
                             if len(row) == 8:  # Проверка корректности строки
-                                # Перенумеровываем ID и сохраняем остальные данные
-                                new_row = [str(pair_id)] + row[1:]
-                                all_pairs_data.append(new_row)
-                                pair_id += 1
+                                # Извлечение значений для фильтрации
+                                try:
+                                    dx = float(row[3])
+                                    dy = float(row[4])
+                                    length = float(row[5])
+
+                                    # Применение фильтров:
+                                    # L > 0, dy ∈ [-5, 5], dx ∈ [0, 20]
+                                    if length > 0 and -5 <= dy <= 5 and 0 <= dx <= 20:
+                                        # Перенумеровываем ID и сохраняем остальные данные
+                                        new_row = [str(pair_id)] + row[1:]
+                                        all_pairs_data.append(new_row)
+                                        pair_id += 1
+                                    else:
+                                        filtered_count += 1
+
+                                except (ValueError, IndexError) as e:
+                                    logger.warning(
+                                        f"Пропущена некорректная строка в {pair_file.name}: {e}"
+                                    )
+                                    continue
 
                 except Exception as e:
                     logger.error(f"Ошибка чтения {pair_file.name}: {e}")
@@ -596,7 +617,8 @@ class PTVAnalyzer:
 
             logger.info(
                 f"Создан суммарный файл: {output_path.name} "
-                f"(всего пар: {len(all_pairs_data)})"
+                f"(пар после фильтрации: {len(all_pairs_data)}, "
+                f"отфильтровано: {filtered_count})"
             )
             return True
 
