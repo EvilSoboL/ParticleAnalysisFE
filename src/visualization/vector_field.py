@@ -42,8 +42,8 @@ class VectorFieldConfig:
     image_width: int = 1024
     image_height: int = 1024
     # Параметры quiver
-    nx: int = 54  # Количество ячеек по X
-    ny: int = 54  # Количество ячеек по Y
+    nx: int = 73  # Количество ячеек по X
+    ny: int = 50  # Количество ячеек по Y
     scale: float = 20  # Масштаб quiver (меньше = длиннее стрелки)
     width: float = 0.005  # Толщина стрелок
     cmap: str = "jet"  # Цветовая карта

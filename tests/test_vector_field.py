@@ -135,8 +135,8 @@ class TestVectorFieldVisualizer:
         passed = (
             cfg.image_width == 1024 and
             cfg.image_height == 1024 and
-            cfg.nx == 54 and
-            cfg.ny == 54 and
+            cfg.nx == 73 and
+            cfg.ny == 50 and
             cfg.scale == 20 and
             cfg.width == 0.005 and
             cfg.cmap == "jet" and
@@ -154,7 +154,7 @@ class TestVectorFieldVisualizer:
         visualizer = VectorFieldVisualizer()
 
         visualizer.set_config(
-            nx=67,
+            nx=73,
             ny=50,
             scale=200,
             width=0.004,
@@ -420,7 +420,7 @@ class TestVectorFieldVisualizer:
 
         # Установка оптимизированных параметров для хорошей визуализации
         visualizer.set_config(
-            nx=67,
+            nx=73,
             ny=50,
             scale=200,
             width=0.003,
