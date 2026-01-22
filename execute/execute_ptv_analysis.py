@@ -406,7 +406,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = PTVParameters(
-        input_folder=r"C:\Users\evils\PycharmProjects\ParticleAnalysisFE\tests\test_data_cam_sorted\binary_filter_3240",
+        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\binary_filter_3240",
         detection_min_area=4,
         detection_max_area=150,
         matching_max_distance=30.0,

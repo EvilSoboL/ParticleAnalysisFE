@@ -22,6 +22,12 @@ ParticleAnalysis состоит из трех последовательных �
 3. PTV Анализ (execute_ptv_analysis.py)
    Входные данные: Папка binary_filter_{threshold}
    Выходные данные: Папка PTV_{threshold} с CSV файлами
+
+   ↓
+
+4. Визуализация (execute_visualization.py) [опционально]
+   Входные данные: {input}_cam_sorted + PTV_{threshold}
+   Выходные данные: Папка PTV_{threshold}/one_to_one_visualization
 ```
 
 ### Пример полного пайплайна
@@ -30,6 +36,7 @@ ParticleAnalysis состоит из трех последовательных �
 from execute.execute_sorting import run_sorting
 from execute.execute_binarization import run_binarization
 from execute.execute_ptv_analysis import run_ptv_analysis
+from execute.execute_visualization import run_visualization
 
 # Шаг 1: Сортировка
 print("Шаг 1: Сортировка изображений...")
@@ -58,7 +65,18 @@ ptv_result = run_ptv_analysis(
 print(f"✓ Обнаружено частиц: {ptv_result.total_particles_detected}")
 print(f"✓ Сопоставлено пар: {ptv_result.total_pairs_matched}")
 
-print(f"\nРезультаты в: {ptv_result.output_folder}")
+# Шаг 4: Визуализация (опционально)
+print("\nШаг 4: Визуализация результатов...")
+vis_result = run_visualization(
+    original_folder=sort_result.output_folder,
+    ptv_folder=ptv_result.output_folder,
+    line_thickness=1
+)
+print(f"✓ Создано визуализаций: {vis_result.cam1_visualizations + vis_result.cam2_visualizations}")
+
+print(f"\nРезультаты:")
+print(f"  PTV анализ: {ptv_result.output_folder}")
+print(f"  Визуализация: {vis_result.output_folder}")
 ```
 
 ## Структура
@@ -69,6 +87,7 @@ execute/
 ├── execute_binarization.py  # Выполнение бинарной фильтрации
 ├── execute_sorting.py       # Сортировка изображений по камерам
 ├── execute_ptv_analysis.py  # PTV анализ (детектирование и сопоставление частиц)
+├── execute_visualization.py # Визуализация PTV результатов (one-to-one matching)
 └── README.md               # Эта документация
 ```
 
@@ -741,6 +760,261 @@ class PTVWindow:
 ```bash
 cd execute
 python execute_ptv_analysis.py
+```
+
+Это запустит пример использования с демонстрацией всех возможностей.
+
+## execute_visualization.py
+
+Модуль для визуализации результатов PTV анализа (one-to-one matching).
+
+### Что делает модуль
+
+Визуализация накладывает результаты сопоставления на исходные изображения:
+- **Зелёные окружности** - частицы в кадре A (начальная позиция)
+- **Красные окружности** - частицы в кадре B (конечная позиция)
+- **Оранжевые линии** - связи между сопоставленными частицами
+
+### Основные классы
+
+#### VisualizationParameters
+
+Dataclass с параметрами для GUI:
+
+```python
+@dataclass
+class VisualizationParameters:
+    original_folder: str        # Путь к папке cam_sorted с исходными изображениями
+    ptv_folder: str            # Путь к папке PTV_XXXX с результатами
+
+    # Параметры визуализации (цвета в BGR)
+    particle_a_color: Tuple[int, int, int] = (0, 255, 0)    # Зелёный (кадр A)
+    particle_b_color: Tuple[int, int, int] = (0, 0, 255)    # Красный (кадр B)
+    line_color: Tuple[int, int, int] = (0, 165, 255)        # Оранжевый (связи)
+    line_thickness: int = 1                                  # Толщина линий
+
+    enable_progress_callback: bool = True  # Callback для прогресса
+```
+
+#### VisualizationExecutor
+
+Главный класс для выполнения визуализации:
+
+```python
+executor = VisualizationExecutor()
+
+# Установка параметров
+params = VisualizationParameters(
+    original_folder="path/to/cam_sorted",
+    ptv_folder="path/to/PTV_10000",
+    particle_a_color=(0, 255, 0),  # Зелёный (BGR)
+    particle_b_color=(0, 0, 255),  # Красный (BGR)
+    line_color=(0, 165, 255),      # Оранжевый (BGR)
+    line_thickness=1
+)
+success, error = executor.set_parameters(params)
+
+# Установка callback для прогресса
+def progress_callback(progress):
+    print(f"[{progress.current_camera}] {progress.percentage:.1f}%")
+
+executor.set_progress_callback(progress_callback)
+
+# Выполнение
+result = executor.execute()
+
+# Результат
+print(f"Обработано пар: {result.total_pairs_processed}")
+print(f"Создано визуализаций:")
+print(f"  cam_1: {result.cam1_visualizations}")
+print(f"  cam_2: {result.cam2_visualizations}")
+print(f"Выходная папка: {result.output_folder}")
+```
+
+### Быстрый старт
+
+Простой способ запуска без создания объектов:
+
+```python
+from execute.execute_visualization import run_visualization
+
+result = run_visualization(
+    original_folder="path/to/cam_sorted",
+    ptv_folder="path/to/PTV_10000",
+    line_thickness=2
+)
+
+if result.success:
+    total_vis = result.cam1_visualizations + result.cam2_visualizations
+    print(f"Создано {total_vis} визуализаций")
+else:
+    print(f"Ошибки: {result.errors}")
+```
+
+### Предварительный просмотр
+
+#### Просмотр визуализации для одной пары
+
+```python
+executor = VisualizationExecutor()
+executor.set_parameters(params)
+
+# Получить preview для одной пары
+preview = executor.get_preview("cam_1", pair_number=1)
+
+if preview:
+    print(f"Камера: {preview['camera']}")
+    print(f"Номер пары: {preview['pair_number']}")
+    # preview['vis_a'] - визуализация кадра A (numpy array)
+    # preview['vis_b'] - визуализация кадра B (numpy array)
+```
+
+#### Получение статистики для пары
+
+```python
+executor = VisualizationExecutor()
+executor.set_parameters(params)
+
+# Получить статистику для пары
+stats = executor.get_pair_statistics("cam_1", pair_number=1)
+
+if stats:
+    print(f"Сопоставлено пар: {stats['pairs_count']}")
+    print(f"Средний диаметр: {stats['mean_diameter']:.2f} пикс.")
+    print(f"Среднее смещение: {stats['mean_displacement']:.2f} пикс.")
+    print(f"Среднее dx: {stats['mean_dx']:.2f} пикс.")
+    print(f"Среднее dy: {stats['mean_dy']:.2f} пикс.")
+```
+
+### Настройка цветов
+
+Цвета задаются в формате BGR (Blue, Green, Red) со значениями 0-255:
+
+```python
+# Примеры цветов (BGR)
+GREEN = (0, 255, 0)      # Зелёный
+RED = (0, 0, 255)        # Красный
+BLUE = (255, 0, 0)       # Синий
+YELLOW = (0, 255, 255)   # Жёлтый
+CYAN = (255, 255, 0)     # Циановый
+MAGENTA = (255, 0, 255)  # Пурпурный
+ORANGE = (0, 165, 255)   # Оранжевый
+WHITE = (255, 255, 255)  # Белый
+BLACK = (0, 0, 0)        # Чёрный
+
+params = VisualizationParameters(
+    original_folder="path/to/cam_sorted",
+    ptv_folder="path/to/PTV_10000",
+    particle_a_color=CYAN,     # Циановые частицы A
+    particle_b_color=MAGENTA,  # Пурпурные частицы B
+    line_color=YELLOW,         # Жёлтые линии связи
+    line_thickness=2
+)
+```
+
+### Интеграция с GUI
+
+#### Пример для PyQt/PySide с выбором цветов
+
+```python
+from PyQt5.QtWidgets import (QProgressBar, QLabel, QSpinBox,
+                             QColorDialog, QPushButton)
+from PyQt5.QtGui import QColor
+from execute.execute_visualization import VisualizationExecutor, VisualizationParameters
+
+class VisualizationWidget:
+    def __init__(self):
+        self.executor = VisualizationExecutor()
+        self.progress_bar = QProgressBar()
+        self.status_label = QLabel()
+
+        # GUI элементы для выбора цветов
+        self.particle_a_color_button = QPushButton("Цвет частиц A")
+        self.particle_a_color_button.clicked.connect(self.choose_particle_a_color)
+        self.particle_a_color = (0, 255, 0)  # Зелёный по умолчанию
+
+        self.particle_b_color_button = QPushButton("Цвет частиц B")
+        self.particle_b_color_button.clicked.connect(self.choose_particle_b_color)
+        self.particle_b_color = (0, 0, 255)  # Красный по умолчанию
+
+        self.line_color_button = QPushButton("Цвет линий")
+        self.line_color_button.clicked.connect(self.choose_line_color)
+        self.line_color = (0, 165, 255)  # Оранжевый по умолчанию
+
+        # Толщина линий
+        self.line_thickness_spinbox = QSpinBox()
+        self.line_thickness_spinbox.setRange(1, 5)
+        self.line_thickness_spinbox.setValue(1)
+
+    def choose_particle_a_color(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            # Qt использует RGB, OpenCV использует BGR
+            self.particle_a_color = (color.blue(), color.green(), color.red())
+            self.particle_a_color_button.setStyleSheet(
+                f"background-color: rgb({color.red()}, {color.green()}, {color.blue()})"
+            )
+
+    def choose_particle_b_color(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.particle_b_color = (color.blue(), color.green(), color.red())
+            self.particle_b_color_button.setStyleSheet(
+                f"background-color: rgb({color.red()}, {color.green()}, {color.blue()})"
+            )
+
+    def choose_line_color(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.line_color = (color.blue(), color.green(), color.red())
+            self.line_color_button.setStyleSheet(
+                f"background-color: rgb({color.red()}, {color.green()}, {color.blue()})"
+            )
+
+    def on_start_button_clicked(self):
+        # Получить параметры из GUI
+        params = VisualizationParameters(
+            original_folder=self.original_folder_input.text(),
+            ptv_folder=self.ptv_folder_input.text(),
+            particle_a_color=self.particle_a_color,
+            particle_b_color=self.particle_b_color,
+            line_color=self.line_color,
+            line_thickness=self.line_thickness_spinbox.value()
+        )
+
+        # Установить параметры
+        success, error = self.executor.set_parameters(params)
+        if not success:
+            self.show_error(error)
+            return
+
+        # Установить callback
+        self.executor.set_progress_callback(self.update_progress)
+
+        # Запустить в отдельном потоке
+        self.worker = WorkerThread(self.executor)
+        self.worker.finished.connect(self.on_finished)
+        self.worker.start()
+
+    def update_progress(self, progress):
+        self.progress_bar.setValue(int(progress.percentage))
+        self.status_label.setText(f"[{progress.current_camera}] {progress.message}")
+
+    def on_preview_button_clicked(self):
+        # Предварительный просмотр
+        preview = self.executor.get_preview("cam_1", pair_number=1)
+        if preview:
+            self.show_preview(preview)
+
+    def on_cancel_button_clicked(self):
+        self.executor.cancel()
+```
+
+### Запуск примера
+
+```bash
+cd execute
+python execute_visualization.py
 ```
 
 Это запустит пример использования с демонстрацией всех возможностей.
