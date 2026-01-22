@@ -316,28 +316,27 @@ class PTVAnalyzer:
 
         labeled_array, num_features = ndimage.label(binary_mask, structure=structure)
 
+        if num_features == 0:
+            return []
+
+        # Быстрое вычисление площадей всех компонент сразу
+        labels = np.arange(1, num_features + 1)
+        areas = ndimage.sum(binary_mask, labeled_array, labels)
+
+        # Быстрое вычисление центров масс всех компонент сразу
+        centers = ndimage.center_of_mass(binary_mask, labeled_array, labels)
+
         particles = []
         particle_id = 1
 
-        for label_idx in range(1, num_features + 1):
-            # Получение маски текущей компоненты
-            component_mask = (labeled_array == label_idx)
-
-            # Вычисление площади
-            area = np.sum(component_mask)
-
+        for label_idx, area, center in zip(labels, areas, centers):
             # Фильтрация по площади
             if area < self.detection_config.min_area:
                 continue
             if area > self.detection_config.max_area:
                 continue
 
-            # Получение координат пикселей компоненты
-            coords = np.argwhere(component_mask)
-
-            # Вычисление центра масс
-            center_y = np.mean(coords[:, 0])
-            center_x = np.mean(coords[:, 1])
+            center_y, center_x = center
 
             # Вычисление эквивалентного диаметра: D = 2 * sqrt(S / pi)
             diameter = 2 * np.sqrt(area / np.pi)
