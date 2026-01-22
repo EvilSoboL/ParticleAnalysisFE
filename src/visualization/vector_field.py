@@ -10,6 +10,9 @@
 
 import numpy as np
 import cv2
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from typing import Optional, List, Tuple
 from pathlib import Path
 from dataclasses import dataclass
@@ -38,13 +41,32 @@ class VectorFieldConfig:
     """Конфигурация визуализации векторного поля."""
     image_width: int = 1024
     image_height: int = 1024
-    background_color: Tuple[int, int, int] = (255, 255, 255)  # Белый фон (BGR)
-    arrow_color: Tuple[int, int, int] = (0, 0, 255)  # Красные стрелки (BGR)
+    # Параметры quiver
+    nx: int = 54  # Количество ячеек по X
+    ny: int = 54  # Количество ячеек по Y
+    scale: float = 80  # Масштаб quiver (меньше = длиннее стрелки)
+    width: float = 0.003  # Толщина стрелок
+    cmap: str = "jet"  # Цветовая карта
+    vmin: Optional[float] = None  # Минимум для colorbar
+    vmax: Optional[float] = None  # Максимум для colorbar
+    # Параметры сетки
+    show_grid: bool = True  # Показывать сетку
+    grid_color: str = "black"  # Цвет сетки
+    grid_alpha: float = 0.25  # Прозрачность сетки
+    grid_linewidth: float = 0.4  # Толщина линий сетки
+    # Параметры осей и заголовка
+    xlabel: str = "r, mm"  # Подпись оси X
+    ylabel: str = "z, mm"  # Подпись оси Y
+    title: Optional[str] = None  # Заголовок графика
+    figsize: Tuple[float, float] = (9, 6)  # Размер фигуры в дюймах
+    # Устаревшие параметры (для совместимости)
+    background_color: Tuple[int, int, int] = (255, 255, 255)
+    arrow_color: Tuple[int, int, int] = (0, 0, 255)
     arrow_thickness: int = 2
-    arrow_tip_length: float = 0.3  # Длина наконечника стрелки (доля от длины)
-    scale_factor: float = 1.0  # Масштаб для векторов (1.0 = без изменений)
-    draw_start_points: bool = True  # Рисовать ли начальные точки
-    start_point_color: Tuple[int, int, int] = (0, 255, 0)  # Зеленые точки (BGR)
+    arrow_tip_length: float = 0.3
+    scale_factor: float = 1.0
+    draw_start_points: bool = False
+    start_point_color: Tuple[int, int, int] = (0, 255, 0)
     start_point_radius: int = 2
 
 
@@ -145,6 +167,19 @@ class VectorFieldVisualizer:
     def set_config(self,
                    image_width: Optional[int] = None,
                    image_height: Optional[int] = None,
+                   nx: Optional[int] = None,
+                   ny: Optional[int] = None,
+                   scale: Optional[float] = None,
+                   width: Optional[float] = None,
+                   cmap: Optional[str] = None,
+                   vmin: Optional[float] = None,
+                   vmax: Optional[float] = None,
+                   show_grid: Optional[bool] = None,
+                   xlabel: Optional[str] = None,
+                   ylabel: Optional[str] = None,
+                   title: Optional[str] = None,
+                   figsize: Optional[Tuple[float, float]] = None,
+                   # Устаревшие параметры для обратной совместимости
                    arrow_color: Optional[Tuple[int, int, int]] = None,
                    arrow_thickness: Optional[int] = None,
                    scale_factor: Optional[float] = None,
@@ -157,17 +192,54 @@ class VectorFieldVisualizer:
         Args:
             image_width: Ширина выходного изображения
             image_height: Высота выходного изображения
-            arrow_color: Цвет стрелок (BGR)
-            arrow_thickness: Толщина стрелок
-            scale_factor: Масштаб векторов
-            background_color: Цвет фона (BGR)
-            draw_start_points: Рисовать ли начальные точки
-            start_point_color: Цвет начальных точек (BGR)
+            nx: Количество ячеек сетки по X
+            ny: Количество ячеек сетки по Y
+            scale: Масштаб quiver (меньше = длиннее стрелки)
+            width: Толщина стрелок quiver
+            cmap: Название цветовой карты matplotlib
+            vmin: Минимальное значение для colorbar
+            vmax: Максимальное значение для colorbar
+            show_grid: Показывать ли сетку
+            xlabel: Подпись оси X
+            ylabel: Подпись оси Y
+            title: Заголовок графика
+            figsize: Размер фигуры (ширина, высота) в дюймах
+            arrow_color: [устарело] Цвет стрелок (BGR)
+            arrow_thickness: [устарело] Толщина стрелок
+            scale_factor: [устарело] Масштаб векторов
+            background_color: [устарело] Цвет фона (BGR)
+            draw_start_points: [устарело] Рисовать ли начальные точки
+            start_point_color: [устарело] Цвет начальных точек (BGR)
         """
         if image_width is not None:
             self.config.image_width = image_width
         if image_height is not None:
             self.config.image_height = image_height
+        if nx is not None:
+            self.config.nx = nx
+        if ny is not None:
+            self.config.ny = ny
+        if scale is not None:
+            self.config.scale = scale
+        if width is not None:
+            self.config.width = width
+        if cmap is not None:
+            self.config.cmap = cmap
+        if vmin is not None:
+            self.config.vmin = vmin
+        if vmax is not None:
+            self.config.vmax = vmax
+        if show_grid is not None:
+            self.config.show_grid = show_grid
+        if xlabel is not None:
+            self.config.xlabel = xlabel
+        if ylabel is not None:
+            self.config.ylabel = ylabel
+        if title is not None:
+            self.config.title = title
+        if figsize is not None:
+            self.config.figsize = figsize
+        # Устаревшие параметры
         if arrow_color is not None:
             self.config.arrow_color = arrow_color
         if arrow_thickness is not None:
@@ -222,7 +294,7 @@ class VectorFieldVisualizer:
 
     def create_vector_field(self, vectors: List[VectorData]) -> np.ndarray:
         """
-        Создание изображения векторного поля.
+        Создание изображения векторного поля с усреднением по ячейкам сетки.
 
         Args:
             vectors: Список векторов смещения
@@ -230,51 +302,126 @@ class VectorFieldVisualizer:
         Returns:
             Изображение с векторным полем (BGR)
         """
-        # Создание пустого изображения с фоном
-        image = np.full(
-            (self.config.image_height, self.config.image_width, 3),
-            self.config.background_color,
-            dtype=np.uint8
-        )
+        if not vectors:
+            raise RuntimeError("Список векторов пуст")
 
         cfg = self.config
 
-        # Рисуем стрелки для каждого вектора
-        for vector in vectors:
-            # Начальная точка
-            x_start = int(round(vector.x0))
-            y_start = int(round(vector.y0))
+        # Преобразование в массивы numpy
+        x0_arr = np.array([v.x0 for v in vectors])
+        y0_arr = np.array([v.y0 for v in vectors])
+        dx_arr = np.array([v.dx for v in vectors])
+        dy_arr = np.array([v.dy for v in vectors])
 
-            # Конечная точка с учетом масштаба
-            x_end = int(round(vector.x0 + vector.dx * cfg.scale_factor))
-            y_end = int(round(vector.y0 + vector.dy * cfg.scale_factor))
+        # ---------- ГРАНИЦЫ ----------
+        x_min, x_max = x0_arr.min(), x0_arr.max()
+        y_min, y_max = y0_arr.min(), y0_arr.max()
 
-            # Проверка, что точки находятся в пределах изображения
-            if (0 <= x_start < cfg.image_width and
-                0 <= y_start < cfg.image_height):
+        # ---------- СЕТКА ----------
+        x_edges = np.linspace(x_min, x_max, cfg.nx + 1)
+        y_edges = np.linspace(y_min, y_max, cfg.ny + 1)
 
-                # Рисуем начальную точку, если включено
-                if cfg.draw_start_points:
-                    cv2.circle(image, (x_start, y_start),
-                             cfg.start_point_radius,
-                             cfg.start_point_color, -1)
+        x_centers = (x_edges[:-1] + x_edges[1:]) / 2
+        y_centers = (y_edges[:-1] + y_edges[1:]) / 2
 
-                # Рисуем стрелку только если есть смещение
-                if vector.length > 0:
-                    # Ограничиваем конечную точку границами изображения
-                    x_end = max(0, min(x_end, cfg.image_width - 1))
-                    y_end = max(0, min(y_end, cfg.image_height - 1))
+        # ---------- ЯЧЕЙКИ ----------
+        ix = np.digitize(x0_arr, x_edges) - 1
+        iy = np.digitize(y0_arr, y_edges) - 1
 
-                    cv2.arrowedLine(
-                        image,
-                        (x_start, y_start),
-                        (x_end, y_end),
-                        cfg.arrow_color,
-                        cfg.arrow_thickness,
-                        tipLength=cfg.arrow_tip_length
-                    )
+        mask = (ix >= 0) & (ix < cfg.nx) & (iy >= 0) & (iy < cfg.ny)
 
-        return image
+        x0_arr = x0_arr[mask]
+        y0_arr = y0_arr[mask]
+        dx_arr = dx_arr[mask]
+        dy_arr = dy_arr[mask]
+        ix = ix[mask]
+        iy = iy[mask]
+
+        # ---------- УСРЕДНЕНИЕ ----------
+        # Используем словарь для группировки
+        cell_data = {}
+        for i in range(len(x0_arr)):
+            key = (ix[i], iy[i])
+            if key not in cell_data:
+                cell_data[key] = {'dx': [], 'dy': []}
+            cell_data[key]['dx'].append(dx_arr[i])
+            cell_data[key]['dy'].append(dy_arr[i])
+
+        if not cell_data:
+            raise RuntimeError("Нет данных для усреднения после фильтрации")
+
+        # Вычисление средних значений
+        X = []
+        Y = []
+        dx_mean = []
+        dy_mean = []
+
+        for (i_x, i_y), data in cell_data.items():
+            X.append(x_centers[i_x])
+            Y.append(y_centers[i_y])
+            dx_mean.append(np.mean(data['dx']))
+            dy_mean.append(np.mean(data['dy']))
+
+        X = np.array(X)
+        Y = np.array(Y)
+        dx_mean = np.array(dx_mean)
+        dy_mean = np.array(dy_mean)
+        L = np.sqrt(dx_mean ** 2 + dy_mean ** 2)
+
+        # ---------- НОРМАЛИЗАЦИЯ ----------
+        from matplotlib.colors import Normalize
+        norm = None
+        if cfg.vmin is not None or cfg.vmax is not None:
+            norm = Normalize(vmin=cfg.vmin, vmax=cfg.vmax)
+
+        # ---------- ОТРИСОВКА ----------
+        fig = Figure(figsize=cfg.figsize, dpi=100)
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+
+        # Рисуем векторное поле с цветовой картой
+        q = ax.quiver(
+            X, Y, dx_mean, dy_mean, L,
+            cmap=cfg.cmap,
+            norm=norm,
+            scale=cfg.scale,
+            width=cfg.width,
+            angles='xy',
+            scale_units='xy'
+        )
+
+        # Colorbar
+        cbar = fig.colorbar(q, ax=ax, label="|V| (bin mean)")
+
+        # Сетка
+        if cfg.show_grid:
+            for x in x_edges:
+                ax.axvline(x, color=cfg.grid_color, lw=cfg.grid_linewidth, alpha=cfg.grid_alpha)
+            for y in y_edges:
+                ax.axhline(y, color=cfg.grid_color, lw=cfg.grid_linewidth, alpha=cfg.grid_alpha)
+
+        # Заголовок и подписи
+        if cfg.title:
+            ax.set_title(cfg.title)
+        ax.set_xlabel(cfg.xlabel)
+        ax.set_ylabel(cfg.ylabel)
+
+        fig.tight_layout()
+
+        # Преобразование в изображение numpy
+        canvas.draw()
+        width, height = fig.get_size_inches() * fig.dpi
+        width, height = int(width), int(height)
+
+        image_rgba = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
+        image_rgba = image_rgba.reshape(height, width, 4)
+
+        # Конвертация RGBA в BGR для совместимости с OpenCV
+        image_bgr = cv2.cvtColor(image_rgba, cv2.COLOR_RGBA2BGR)
+
+        plt.close(fig)
+
+        return image_bgr
 
     def _save_vector_field(self, image: np.ndarray, output_path: Path) -> bool:
         """
@@ -321,6 +468,9 @@ class VectorFieldVisualizer:
         if not vectors:
             return 0, [f"Нет данных в {csv_path.name}"]
 
+        # Установка заголовка графика
+        self.config.title = f"Усреднение по ячейкам ({self.config.nx}×{self.config.ny})\n{camera_name}"
+
         # Создание векторного поля
         vector_field_image = self.create_vector_field(vectors)
 
@@ -352,8 +502,9 @@ class VectorFieldVisualizer:
         logger.info("СОЗДАНИЕ ВЕКТОРНЫХ ПОЛЕЙ")
         logger.info(f"PTV результаты: {self.ptv_folder}")
         logger.info(f"Выходная папка: {self.output_folder}")
-        logger.info(f"Размер изображения: {self.config.image_width}x{self.config.image_height}")
-        logger.info(f"Масштаб векторов: {self.config.scale_factor}")
+        logger.info(f"Сетка: {self.config.nx}×{self.config.ny}")
+        logger.info(f"Масштаб quiver: {self.config.scale}")
+        logger.info(f"Цветовая карта: {self.config.cmap}")
         logger.info("=" * 60)
 
         all_errors = []
