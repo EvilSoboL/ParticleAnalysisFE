@@ -430,12 +430,12 @@ class TestVectorFieldVisualizer:
         self._log_result("test_scale_factor", passed, message if not passed else "")
         return passed
 
-    def run_all_tests(self) -> bool:
+    def run_all_tests(self) -> dict:
         """
         Запуск всех тестов.
 
         Returns:
-            bool: True если все тесты прошли успешно
+            dict: Результаты тестирования
         """
         print("\n" + "=" * 60)
         print("ЗАПУСК ТЕСТОВ: VectorFieldVisualizer")
@@ -443,7 +443,12 @@ class TestVectorFieldVisualizer:
 
         if not self.setup():
             print("Ошибка подготовки к тестированию")
-            return False
+            return {
+                'success': False,
+                'passed': 0,
+                'total': 0,
+                'errors': ['Ошибка подготовки к тестированию']
+            }
 
         print("\nЗапуск тестов:")
 
@@ -496,25 +501,46 @@ class TestVectorFieldVisualizer:
 
         self.teardown()
 
-        return len(failed_tests) == 0
+        return {
+            'success': len(failed_tests) == 0,
+            'passed': passed_count,
+            'total': total_count,
+            'failed_tests': failed_tests
+        }
 
 
-# Пример использования
+def run_tests(ptv_folder_path: str, cam_sorted_path: str = None,
+              cleanup: bool = False) -> dict:
+    """
+    Запуск тестов VectorFieldVisualizer.
+
+    Args:
+        ptv_folder_path: Путь к папке PTV_XXXX с результатами
+        cam_sorted_path: Путь к папке cam_sorted (опционально)
+        cleanup: Удалять ли выходные папки после тестов
+
+    Returns:
+        dict: Результаты тестирования
+    """
+    tester = TestVectorFieldVisualizer(ptv_folder_path, cam_sorted_path, cleanup=cleanup)
+    return tester.run_all_tests()
+
+
 if __name__ == "__main__":
-    import sys
+    # Пути к тестовым данным
+    # ptv_folder_path - папка PTV_XXXX с результатами (содержит cam_X_pairs_sum.csv)
+    # cam_sorted_path - папка cam_sorted с исходными изображениями (опционально)
 
-    if len(sys.argv) < 2:
-        print("Использование: python test_vector_field.py <путь_к_папке_PTV> [путь_к_cam_sorted]")
-        sys.exit(1)
+    PTV_FOLDER = r"C:\Users\evils\PycharmProjects\ParticleAnalysisFE\tests\test_data_cam_sorted\PTV_10000"
+    CAM_SORTED_FOLDER = r"C:\Users\evils\PycharmProjects\ParticleAnalysisFE\tests\test_data_cam_sorted"
 
-    ptv_path = sys.argv[1]
-    cam_sorted = sys.argv[2] if len(sys.argv) > 2 else None
+    # cleanup=True - удалять выходные папки после тестов
+    # cleanup=False - сохранять выходные папки для проверки результатов
+    CLEANUP = False
 
-    tester = TestVectorFieldVisualizer(
-        ptv_folder_path=ptv_path,
-        cam_sorted_path=cam_sorted,
-        cleanup=False  # Не удаляем результаты для проверки
-    )
+    results = run_tests(PTV_FOLDER, CAM_SORTED_FOLDER, cleanup=CLEANUP)
 
-    success = tester.run_all_tests()
-    sys.exit(0 if success else 1)
+    if results['success']:
+        print("\n✓ Все тесты пройдены успешно!")
+    else:
+        print(f"\n✗ Пройдено {results['passed']} из {results['total']} тестов")
