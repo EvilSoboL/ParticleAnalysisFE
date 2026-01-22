@@ -530,6 +530,81 @@ class PTVAnalyzer:
             logger.error(f"Ошибка сохранения {output_path.name}: {e}")
             return False
 
+    def _save_summary_pairs_csv(
+        self,
+        pairs_folder: Path,
+        output_path: Path
+    ) -> bool:
+        """
+        Создание суммарного CSV файла со всеми парами из папки.
+
+        Читает все CSV файлы из указанной папки, объединяет их в один файл
+        с перенумерацией ID.
+
+        Args:
+            pairs_folder: Папка с CSV файлами пар (например, cam_1_pairs)
+            output_path: Путь для сохранения суммарного файла
+
+        Returns:
+            bool: True если успешно
+        """
+        try:
+            if not pairs_folder.exists():
+                logger.warning(f"Папка {pairs_folder} не существует")
+                return False
+
+            # Получение всех CSV файлов пар
+            pair_files = sorted(pairs_folder.glob("*_pair.csv"))
+
+            if not pair_files:
+                logger.warning(f"Нет файлов пар в {pairs_folder}")
+                return False
+
+            all_pairs_data = []
+            pair_id = 1
+
+            # Чтение всех файлов пар
+            for pair_file in pair_files:
+                try:
+                    with open(pair_file, 'r', encoding='utf-8') as f:
+                        reader = csv.reader(f, delimiter=';')
+                        next(reader)  # Пропускаем заголовок
+
+                        for row in reader:
+                            if len(row) == 8:  # Проверка корректности строки
+                                # Перенумеровываем ID и сохраняем остальные данные
+                                new_row = [str(pair_id)] + row[1:]
+                                all_pairs_data.append(new_row)
+                                pair_id += 1
+
+                except Exception as e:
+                    logger.error(f"Ошибка чтения {pair_file.name}: {e}")
+                    continue
+
+            # Сохранение суммарного файла
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(output_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f, delimiter=';')
+
+                # Заголовки
+                writer.writerow([
+                    'ID', 'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area'
+                ])
+
+                # Данные
+                writer.writerows(all_pairs_data)
+
+            logger.info(
+                f"Создан суммарный файл: {output_path.name} "
+                f"(всего пар: {len(all_pairs_data)})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Ошибка создания суммарного файла {output_path.name}: {e}")
+            return False
+
     def _get_image_pairs(self, camera_folder: Path) -> List[Tuple[Path, Path]]:
         """
         Получение списка пар изображений (a, b) из папки камеры.
@@ -685,6 +760,12 @@ class PTVAnalyzer:
 
             if len(particles_a) == 0 and len(particles_b) == 0:
                 warnings.append(f"Пара {pair_num}: частицы не обнаружены")
+
+        # Создание суммарного файла с парами
+        if not self._cancel_requested and total_matched_pairs > 0:
+            summary_output_path = self.output_folder / f"{camera_name}_pairs_sum.csv"
+            if not self._save_summary_pairs_csv(pairs_output, summary_output_path):
+                errors.append(f"Ошибка создания суммарного файла: {summary_output_path.name}")
 
         # Финальный прогресс
         if self._progress_callback and not self._cancel_requested:

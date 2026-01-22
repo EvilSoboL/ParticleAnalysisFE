@@ -589,6 +589,60 @@ class TestPTVAnalyzer:
         self._log_result("test_csv_output_format", passed)
         return passed
 
+    def test_summary_pairs_csv(self) -> bool:
+        """Тест создания суммарных CSV файлов с парами."""
+        analyzer = PTVAnalyzer()
+        analyzer.set_input_folder(str(self.test_data_path))
+
+        result = analyzer.process_all()
+
+        output_folder = Path(result.output_folder)
+
+        passed = False
+
+        if output_folder.exists() and result.total_images_processed > 0:
+            # Проверяем наличие суммарных файлов
+            cam1_summary = output_folder / "cam_1_pairs_sum.csv"
+            cam2_summary = output_folder / "cam_2_pairs_sum.csv"
+
+            # Проверяем что хотя бы один суммарный файл создан
+            if cam1_summary.exists() or cam2_summary.exists():
+                passed = True
+
+                # Проверяем формат суммарного файла cam_1
+                if cam1_summary.exists():
+                    with open(cam1_summary, 'r', encoding='utf-8') as f:
+                        reader = csv.reader(f, delimiter=';')
+                        header = next(reader)
+
+                        # Проверка заголовка
+                        if header != ['ID', 'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area']:
+                            passed = False
+
+                        # Проверка что есть данные и ID начинается с 1
+                        rows = list(reader)
+                        if len(rows) > 0:
+                            if rows[0][0] != '1':
+                                passed = False
+                        else:
+                            # Если нет строк, это тоже валидный случай (нет пар)
+                            pass
+
+                # Проверяем формат суммарного файла cam_2
+                if cam2_summary.exists() and passed:
+                    with open(cam2_summary, 'r', encoding='utf-8') as f:
+                        reader = csv.reader(f, delimiter=';')
+                        header = next(reader)
+
+                        if header != ['ID', 'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area']:
+                            passed = False
+
+        if self.cleanup and output_folder.exists():
+            shutil.rmtree(output_folder)
+
+        self._log_result("test_summary_pairs_csv", passed)
+        return passed
+
     def test_particle_diameter_calculation(self) -> bool:
         """Тест корректности вычисления диаметра частицы."""
         analyzer = PTVAnalyzer()
@@ -683,6 +737,7 @@ class TestPTVAnalyzer:
         self.test_save_particles_csv()
         self.test_save_pairs_csv()
         self.test_csv_output_format()
+        self.test_summary_pairs_csv()
 
         print("\n--- Тесты полной обработки ---")
         self.test_process_all()
