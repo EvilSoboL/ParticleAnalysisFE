@@ -28,6 +28,12 @@ ParticleAnalysis состоит из трех последовательных �
 4. Визуализация (execute_visualization.py) [опционально]
    Входные данные: {input}_cam_sorted + PTV_{threshold}
    Выходные данные: Папка PTV_{threshold}/one_to_one_visualization
+
+   ↓
+
+5. Векторное поле (execute_vector_field.py) [опционально]
+   Входные данные: PTV_{threshold}
+   Выходные данные: Папка PTV_{threshold}/vector_field
 ```
 
 ### Пример полного пайплайна
@@ -37,6 +43,7 @@ from execute.execute_sorting import run_sorting
 from execute.execute_binarization import run_binarization
 from execute.execute_ptv_analysis import run_ptv_analysis
 from execute.execute_visualization import run_visualization
+from execute.execute_vector_field import run_vector_field
 
 # Шаг 1: Сортировка
 print("Шаг 1: Сортировка изображений...")
@@ -74,9 +81,21 @@ vis_result = run_visualization(
 )
 print(f"✓ Создано визуализаций: {vis_result.cam1_visualizations + vis_result.cam2_visualizations}")
 
+# Шаг 5: Векторное поле (опционально)
+print("\nШаг 5: Создание векторного поля...")
+vf_result = run_vector_field(
+    ptv_folder=ptv_result.output_folder,
+    nx=73,
+    ny=50,
+    scale=20
+)
+print(f"✓ cam_1 векторов: {vf_result.cam1_vectors_count}")
+print(f"✓ cam_2 векторов: {vf_result.cam2_vectors_count}")
+
 print(f"\nРезультаты:")
 print(f"  PTV анализ: {ptv_result.output_folder}")
 print(f"  Визуализация: {vis_result.output_folder}")
+print(f"  Векторное поле: {vf_result.output_folder}")
 ```
 
 ## Структура
@@ -88,6 +107,7 @@ execute/
 ├── execute_sorting.py       # Сортировка изображений по камерам
 ├── execute_ptv_analysis.py  # PTV анализ (детектирование и сопоставление частиц)
 ├── execute_visualization.py # Визуализация PTV результатов (one-to-one matching)
+├── execute_vector_field.py  # Визуализация векторного поля
 └── README.md               # Эта документация
 ```
 
@@ -1015,6 +1035,432 @@ class VisualizationWidget:
 ```bash
 cd execute
 python execute_visualization.py
+```
+
+Это запустит пример использования с демонстрацией всех возможностей.
+
+## execute_vector_field.py
+
+Модуль для визуализации векторного поля смещений частиц с использованием matplotlib quiver.
+
+### Что делает модуль
+
+Векторное поле создается на основе суммарных CSV файлов (cam_X_pairs_sum.csv):
+- Векторы усредняются по ячейкам сетки (binning)
+- Используется matplotlib quiver для отрисовки стрелок
+- Цветовая карта показывает длину векторов
+- Добавляется сетка и colorbar для удобства анализа
+
+### Основные классы
+
+#### VectorFieldParameters
+
+Dataclass с параметрами для GUI:
+
+```python
+@dataclass
+class VectorFieldParameters:
+    ptv_folder: str             # Путь к папке PTV_XXXX
+
+    # Параметры сетки
+    nx: int = 73                # Количество ячеек по X
+    ny: int = 50                # Количество ячеек по Y
+
+    # Параметры quiver
+    scale: float = 20           # Масштаб стрелок (меньше = длиннее)
+    width: float = 0.005        # Толщина стрелок
+
+    # Параметры цветовой карты
+    cmap: str = "jet"           # Название цветовой карты matplotlib
+    vmin: Optional[float] = None  # Минимум для colorbar (None = авто)
+    vmax: Optional[float] = None  # Максимум для colorbar (None = авто)
+
+    # Параметры сетки
+    show_grid: bool = True      # Показывать сетку
+    grid_color: str = "black"   # Цвет линий сетки
+    grid_alpha: float = 0.25    # Прозрачность сетки (0-1)
+    grid_linewidth: float = 0.4 # Толщина линий сетки
+
+    # Параметры осей
+    xlabel: str = "r, mm"       # Подпись оси X
+    ylabel: str = "z, mm"       # Подпись оси Y
+    figsize: Tuple[float, float] = (9, 6)  # Размер фигуры (дюймы)
+
+    # Доступные цветовые карты
+    available_cmaps: Tuple[str, ...] = (
+        "jet", "viridis", "plasma", "inferno", "magma", "cividis",
+        "twilight", "turbo", "hot", "cool", "spring", "summer",
+        "autumn", "winter", "RdYlBu", "RdYlGn", "Spectral"
+    )
+```
+
+#### VectorFieldExecutor
+
+Главный класс для выполнения визуализации векторного поля:
+
+```python
+executor = VectorFieldExecutor()
+
+# Установка параметров
+params = VectorFieldParameters(
+    ptv_folder="path/to/PTV_10000",
+    nx=73,
+    ny=50,
+    scale=20,
+    width=0.005,
+    cmap="jet",
+    show_grid=True
+)
+success, error = executor.set_parameters(params)
+
+# Установка callback для прогресса (зарезервировано)
+def progress_callback(progress):
+    print(f"Прогресс: {progress}")
+
+executor.set_progress_callback(progress_callback)
+
+# Выполнение
+result = executor.execute()
+
+# Результат
+print(f"cam_1 векторов: {result.cam1_vectors_count}")
+print(f"cam_2 векторов: {result.cam2_vectors_count}")
+print(f"Выходная папка: {result.output_folder}")
+```
+
+### Быстрый старт
+
+Простой способ запуска без создания объектов:
+
+```python
+from execute.execute_vector_field import run_vector_field
+
+result = run_vector_field(
+    ptv_folder="path/to/PTV_10000",
+    nx=73,
+    ny=50,
+    scale=20,
+    width=0.005,
+    cmap="jet"
+)
+
+if result.success:
+    print(f"cam_1: {result.cam1_vectors_count} векторов")
+    print(f"cam_2: {result.cam2_vectors_count} векторов")
+else:
+    print(f"Ошибки: {result.errors}")
+```
+
+### Предварительный просмотр
+
+#### Просмотр векторного поля для одной камеры
+
+```python
+executor = VectorFieldExecutor()
+executor.set_parameters(params)
+
+# Получить preview для одной камеры
+preview_image = executor.get_preview("cam_1")
+
+if preview_image is not None:
+    # preview_image - numpy array (BGR изображение)
+    import cv2
+    cv2.imshow("Preview cam_1", preview_image)
+    cv2.waitKey(0)
+```
+
+#### Получение статистики векторов
+
+```python
+executor = VectorFieldExecutor()
+executor.set_parameters(params)
+
+# Получить статистику для камеры
+stats = executor.get_statistics("cam_1")
+
+if stats:
+    print(f"Всего векторов: {stats['vectors_count']}")
+    print(f"Векторов с смещением: {stats['vectors_with_displacement']}")
+    print(f"Средняя длина: {stats['mean_length']:.2f}")
+    print(f"Макс. длина: {stats['max_length']:.2f}")
+    print(f"Мин. длина: {stats['min_length']:.2f}")
+    print(f"Среднее dx: {stats['mean_dx']:.2f}")
+    print(f"Среднее dy: {stats['mean_dy']:.2f}")
+    print(f"Стд. откл. dx: {stats['std_dx']:.2f}")
+    print(f"Стд. откл. dy: {stats['std_dy']:.2f}")
+```
+
+### Настройка цветовых карт
+
+Доступные цветовые карты для визуализации:
+
+```python
+# Последовательные карты (хорошо для скалярных данных)
+"jet"       # Классическая радужная (синий-зелёный-жёлтый-красный)
+"viridis"   # Перцептивно-линейная (тёмно-синий-зелёный-жёлтый)
+"plasma"    # Перцептивно-линейная (фиолетовый-розовый-жёлтый)
+"inferno"   # Перцептивно-линейная (чёрный-красный-жёлтый)
+"magma"     # Перцептивно-линейная (чёрный-фиолетовый-белый)
+"cividis"   # Оптимизирована для дальтоников
+
+# Циклические карты
+"twilight"  # Симметричная циклическая (синий-белый-красный-чёрный)
+
+# Температурные карты
+"turbo"     # Улучшенная радужная карта
+"hot"       # Чёрный-красный-жёлтый-белый
+"cool"      # Циановый-пурпурный
+
+# Сезонные карты
+"spring"    # Пурпурный-жёлтый
+"summer"    # Зелёный-жёлтый
+"autumn"    # Красный-жёлтый
+"winter"    # Синий-зелёный
+
+# Расходящиеся карты (хорошо для данных с центральным значением)
+"RdYlBu"    # Красный-жёлтый-синий
+"RdYlGn"    # Красный-жёлтый-зелёный
+"Spectral"  # Спектральная расходящаяся
+
+# Пример использования
+params = VectorFieldParameters(
+    ptv_folder="path/to/PTV_10000",
+    nx=73,
+    ny=50,
+    cmap="viridis",    # Используем viridis вместо jet
+    vmin=0,            # Минимум colorbar
+    vmax=10            # Максимум colorbar
+)
+```
+
+### Интеграция с GUI
+
+#### Пример для PyQt/PySide
+
+```python
+from PyQt5.QtWidgets import (QProgressBar, QLabel, QSpinBox,
+                             QDoubleSpinBox, QComboBox)
+from execute.execute_vector_field import VectorFieldExecutor, VectorFieldParameters
+
+class VectorFieldWidget:
+    def __init__(self):
+        self.executor = VectorFieldExecutor()
+        self.progress_bar = QProgressBar()
+        self.status_label = QLabel()
+
+        # GUI элементы для параметров сетки
+        self.nx_spinbox = QSpinBox()
+        self.nx_spinbox.setRange(10, 200)
+        self.nx_spinbox.setValue(73)
+
+        self.ny_spinbox = QSpinBox()
+        self.ny_spinbox.setRange(10, 200)
+        self.ny_spinbox.setValue(50)
+
+        # GUI элементы для параметров quiver
+        self.scale_spinbox = QDoubleSpinBox()
+        self.scale_spinbox.setRange(1.0, 200.0)
+        self.scale_spinbox.setValue(20.0)
+
+        self.width_spinbox = QDoubleSpinBox()
+        self.width_spinbox.setRange(0.001, 0.02)
+        self.width_spinbox.setSingleStep(0.001)
+        self.width_spinbox.setValue(0.005)
+
+        # Выбор цветовой карты
+        self.cmap_combobox = QComboBox()
+        cmaps = ["jet", "viridis", "plasma", "inferno", "magma", "cividis",
+                 "twilight", "turbo", "hot", "cool", "spring", "summer",
+                 "autumn", "winter", "RdYlBu", "RdYlGn", "Spectral"]
+        self.cmap_combobox.addItems(cmaps)
+
+    def on_start_button_clicked(self):
+        # Получить параметры из GUI
+        params = VectorFieldParameters(
+            ptv_folder=self.ptv_folder_input.text(),
+            nx=self.nx_spinbox.value(),
+            ny=self.ny_spinbox.value(),
+            scale=self.scale_spinbox.value(),
+            width=self.width_spinbox.value(),
+            cmap=self.cmap_combobox.currentText(),
+            show_grid=self.show_grid_checkbox.isChecked()
+        )
+
+        # Установить параметры
+        success, error = self.executor.set_parameters(params)
+        if not success:
+            self.show_error(error)
+            return
+
+        # Показать статистику перед выполнением
+        self.show_statistics()
+
+        # Установить callback
+        self.executor.set_progress_callback(self.update_progress)
+
+        # Запустить в отдельном потоке
+        self.worker = WorkerThread(self.executor)
+        self.worker.finished.connect(self.on_finished)
+        self.worker.start()
+
+    def show_statistics(self):
+        """Показать статистику векторов перед выполнением."""
+        cam1_stats = self.executor.get_statistics("cam_1")
+        cam2_stats = self.executor.get_statistics("cam_2")
+
+        info_text = ""
+        if cam1_stats:
+            info_text += f"cam_1: {cam1_stats['vectors_count']} векторов\n"
+            if cam1_stats.get('mean_length'):
+                info_text += f"  Средняя длина: {cam1_stats['mean_length']:.2f}\n"
+
+        if cam2_stats:
+            info_text += f"cam_2: {cam2_stats['vectors_count']} векторов\n"
+            if cam2_stats.get('mean_length'):
+                info_text += f"  Средняя длина: {cam2_stats['mean_length']:.2f}\n"
+
+        self.info_label.setText(info_text)
+
+    def on_preview_button_clicked(self):
+        """Показать предпросмотр векторного поля."""
+        camera = self.camera_combobox.currentText()  # cam_1 или cam_2
+        preview = self.executor.get_preview(camera)
+        if preview is not None:
+            # Показать preview (numpy array BGR)
+            self.show_preview_image(preview)
+
+    def update_progress(self, progress):
+        # В текущей версии не используется
+        pass
+
+    def on_cancel_button_clicked(self):
+        self.executor.cancel()
+```
+
+#### Пример для Tkinter
+
+```python
+import tkinter as tk
+from tkinter import ttk
+from execute.execute_vector_field import VectorFieldExecutor, VectorFieldParameters
+
+class VectorFieldWindow:
+    def __init__(self, root):
+        self.root = root
+        self.executor = VectorFieldExecutor()
+
+        # GUI элементы
+        self.progress_bar = ttk.Progressbar(root, length=300)
+        self.status_label = tk.Label(root, text="")
+
+        # Параметры сетки
+        tk.Label(root, text="Разрешение сетки:").pack()
+
+        tk.Label(root, text="nx (ячеек по X):").pack()
+        self.nx_var = tk.IntVar(value=73)
+        tk.Spinbox(root, from_=10, to=200, textvariable=self.nx_var).pack()
+
+        tk.Label(root, text="ny (ячеек по Y):").pack()
+        self.ny_var = tk.IntVar(value=50)
+        tk.Spinbox(root, from_=10, to=200, textvariable=self.ny_var).pack()
+
+        # Параметры quiver
+        tk.Label(root, text="Параметры quiver:").pack()
+
+        tk.Label(root, text="Масштаб (scale):").pack()
+        self.scale_var = tk.DoubleVar(value=20.0)
+        tk.Spinbox(root, from_=1.0, to=200.0, increment=1.0,
+                  textvariable=self.scale_var).pack()
+
+        tk.Label(root, text="Толщина стрелок (width):").pack()
+        self.width_var = tk.DoubleVar(value=0.005)
+        tk.Spinbox(root, from_=0.001, to=0.02, increment=0.001,
+                  textvariable=self.width_var).pack()
+
+        # Цветовая карта
+        tk.Label(root, text="Цветовая карта:").pack()
+        self.cmap_var = tk.StringVar(value="jet")
+        cmaps = ["jet", "viridis", "plasma", "inferno", "magma", "turbo"]
+        cmap_menu = ttk.Combobox(root, textvariable=self.cmap_var, values=cmaps)
+        cmap_menu.pack()
+
+        # Кнопки
+        self.start_button = tk.Button(root, text="Начать", command=self.start)
+        self.start_button.pack()
+
+        self.preview_button = tk.Button(root, text="Предпросмотр",
+                                       command=self.preview)
+        self.preview_button.pack()
+
+        self.cancel_button = tk.Button(root, text="Отмена", command=self.cancel)
+        self.cancel_button.pack()
+
+    def start(self):
+        params = VectorFieldParameters(
+            ptv_folder=self.ptv_folder_var.get(),
+            nx=self.nx_var.get(),
+            ny=self.ny_var.get(),
+            scale=self.scale_var.get(),
+            width=self.width_var.get(),
+            cmap=self.cmap_var.get()
+        )
+
+        success, error = self.executor.set_parameters(params)
+        if not success:
+            tk.messagebox.showerror("Ошибка", error)
+            return
+
+        # Показать статистику
+        stats_text = self.get_statistics_text()
+        if stats_text:
+            tk.messagebox.showinfo("Статистика", stats_text)
+
+        # Запуск в потоке
+        import threading
+        thread = threading.Thread(target=self.run_vector_field)
+        thread.start()
+
+    def preview(self):
+        """Показать предпросмотр."""
+        preview = self.executor.get_preview("cam_1")
+        if preview is not None:
+            # Сохранить и показать preview
+            import cv2
+            cv2.imwrite("preview.png", preview)
+            tk.messagebox.showinfo("Предпросмотр",
+                                  "Предпросмотр сохранён в preview.png")
+
+    def get_statistics_text(self):
+        """Получить текст статистики для отображения."""
+        cam1_stats = self.executor.get_statistics("cam_1")
+        cam2_stats = self.executor.get_statistics("cam_2")
+
+        text = ""
+        if cam1_stats:
+            text += f"cam_1: {cam1_stats['vectors_count']} векторов\n"
+            if cam1_stats.get('mean_length'):
+                text += f"  Средняя длина: {cam1_stats['mean_length']:.2f}\n"
+
+        if cam2_stats:
+            text += f"cam_2: {cam2_stats['vectors_count']} векторов\n"
+            if cam2_stats.get('mean_length'):
+                text += f"  Средняя длина: {cam2_stats['mean_length']:.2f}\n"
+
+        return text
+
+    def run_vector_field(self):
+        result = self.executor.execute()
+        self.root.after(0, lambda: self.on_finished(result))
+
+    def cancel(self):
+        self.executor.cancel()
+```
+
+### Запуск примера
+
+```bash
+cd execute
+python execute_vector_field.py
 ```
 
 Это запустит пример использования с демонстрацией всех возможностей.
