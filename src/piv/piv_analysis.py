@@ -83,7 +83,7 @@ class PIVConfig:
     filter_kernel_size: int = 2  # Размер ядра фильтра
 
     # Физические параметры
-    dt: float = 1.0  # Временной интервал между кадрами (мс)
+    dt: float = 0.002  # Временной интервал между кадрами в паре (_a и _b): 2 мкс = 0.002 мс
     scaling_factor: float = 1.0  # Масштабный коэффициент (пиксели -> мм)
 
 
@@ -318,20 +318,30 @@ class PIVAnalyzer:
 
         # Валидация векторов
         if cfg.validation_method == 'sig2noise':
-            u, v, mask = validation.sig2noise_val(
-                u, v, sig2noise,
+            # sig2noise_val возвращает только маску
+            mask = validation.sig2noise_val(
+                sig2noise,
                 threshold=cfg.sig2noise_threshold
             )
         else:
-            mask = validation.global_val(u, v)
+            # global_val требует пороги для u и v
+            # Используем широкие пороги по умолчанию
+            mask = validation.global_val(
+                u, v,
+                u_thresholds=(-100, 100),
+                v_thresholds=(-100, 100)
+            )
 
         # Замена невалидных векторов
-        u, v = filters.replace_outliers(
+        # replace_outliers возвращает (u, v, flags, ...) или (u, v, ...)
+        result = filters.replace_outliers(
             u, v,
+            mask,
             method=cfg.filter_method,
             max_iter=cfg.max_filter_iteration,
             kernel_size=cfg.filter_kernel_size
         )
+        u, v = result[0], result[1]
 
         # Применение масштабного коэффициента
         if cfg.scaling_factor != 1.0:
@@ -501,9 +511,28 @@ class PIVAnalyzer:
             logger.warning(f"В {camera_name} недостаточно файлов для PIV анализа")
             return 0, [f"Недостаточно файлов в {camera_name}"], []
 
-        # Создание пар последовательных изображений
-        pairs = [(png_files[i], png_files[i+1]) for i in range(total_files - 1)]
+        # Создание пар изображений _a и _b
+        # Разделяем файлы на _a и _b
+        files_a = sorted([f for f in png_files if f.stem.endswith('_a')])
+        files_b = sorted([f for f in png_files if f.stem.endswith('_b')])
+
+        # Создаем пары по номерам (1_a с 1_b, 2_a с 2_b и т.д.)
+        pairs = []
+        for file_a in files_a:
+            # Извлекаем номер из имени файла (например, "100_a" -> "100")
+            number = file_a.stem.rsplit('_', 1)[0]
+            # Ищем соответствующий _b файл
+            file_b = camera_input / f"{number}_b.png"
+            if file_b.exists():
+                pairs.append((file_a, file_b))
+            else:
+                logger.warning(f"Не найден парный файл для {file_a.name}")
+
         total_pairs = len(pairs)
+
+        if total_pairs == 0:
+            logger.warning(f"В {camera_name} не найдено валидных пар изображений (_a и _b)")
+            return 0, [f"Нет валидных пар в {camera_name}"], []
 
         processed = 0
         errors = []
@@ -656,12 +685,20 @@ class PIVAnalyzer:
         if not camera_path.exists():
             return None
 
+        # Получение пар _a и _b файлов
         png_files = sorted(camera_path.glob("*.png"))
-        if len(png_files) < 2 or pair_index >= len(png_files) - 1:
+        files_a = sorted([f for f in png_files if f.stem.endswith('_a')])
+
+        if not files_a or pair_index >= len(files_a):
             return None
 
-        path_a = png_files[pair_index]
-        path_b = png_files[pair_index + 1]
+        # Получение пары по индексу
+        path_a = files_a[pair_index]
+        number = path_a.stem.rsplit('_', 1)[0]
+        path_b = camera_path / f"{number}_b.png"
+
+        if not path_b.exists():
+            return None
 
         # Загрузка изображений
         image_a = self._load_image(path_a)

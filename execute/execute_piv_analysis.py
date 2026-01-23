@@ -66,7 +66,7 @@ class PIVParameters:
     search_area_size: int = 64  # Размер области поиска
 
     # ФИЗИЧЕСКИЕ ПАРАМЕТРЫ
-    dt: float = 1.0  # Временной интервал между кадрами (мс)
+    dt: float = 0.002  # Временной интервал между кадрами в паре (_a и _b): 2 мкс = 0.002 мс
     scaling_factor: float = 1.0  # Масштабный коэффициент (пиксели -> мм)
 
     # ПАРАМЕТРЫ ВАЛИДАЦИИ
@@ -87,9 +87,9 @@ class PIVParameters:
     search_area_size_max: int = 256
     search_area_size_default: int = 64
 
-    dt_min: float = 0.001
+    dt_min: float = 0.0001
     dt_max: float = 1000.0
-    dt_default: float = 1.0
+    dt_default: float = 0.002  # 2 мкс между кадрами в паре
 
     scaling_factor_min: float = 0.001
     scaling_factor_max: float = 100.0
@@ -340,7 +340,7 @@ def run_piv_analysis(
     window_size: int = 32,
     overlap: int = 16,
     search_area_size: int = 64,
-    dt: float = 1.0,
+    dt: float = 0.002,
     scaling_factor: float = 1.0,
     sig2noise_threshold: float = 1.3,
     progress_callback: Optional[Callable] = None
@@ -353,7 +353,7 @@ def run_piv_analysis(
         window_size: Размер окна корреляции (по умолчанию 32)
         overlap: Перекрытие окон (по умолчанию 16)
         search_area_size: Размер области поиска (по умолчанию 64)
-        dt: Временной интервал между кадрами (по умолчанию 1.0)
+        dt: Временной интервал между кадрами в паре (_a и _b): 2 мкс = 0.002 мс (по умолчанию 0.002)
         scaling_factor: Масштабный коэффициент (по умолчанию 1.0)
         sig2noise_threshold: Порог signal-to-noise (по умолчанию 1.3)
         progress_callback: Callback функция для прогресса (опционально)
@@ -438,7 +438,7 @@ def example_gui_usage():
         window_size=32,
         overlap=16,
         search_area_size=64,
-        dt=1.0,
+        dt=0.002,  # 2 мкс между кадрами в паре (_a и _b)
         scaling_factor=1.0,
         sig2noise_threshold=1.3,
         enable_progress_callback=True
@@ -449,7 +449,7 @@ def example_gui_usage():
     print(f"  Размер окна: {parameters.window_size} пикс.")
     print(f"  Перекрытие: {parameters.overlap} пикс.")
     print(f"  Размер области поиска: {parameters.search_area_size} пикс.")
-    print(f"  Временной интервал: {parameters.dt} мс")
+    print(f"  Временной интервал между кадрами в паре: {parameters.dt} мс (2 мкс)")
     print(f"  Масштабный коэффициент: {parameters.scaling_factor}")
     print(f"  Порог signal-to-noise: {parameters.sig2noise_threshold}")
 
@@ -467,7 +467,7 @@ def example_gui_usage():
         print(f"\nОШИБКА: {error_msg}")
         return
 
-    print("\n✓ Параметры валидны")
+    print("\n[OK] Параметры валидны")
 
     # === ШАГ 4: Предварительный просмотр ===
     print("\nПредварительный просмотр PIV анализа...")
