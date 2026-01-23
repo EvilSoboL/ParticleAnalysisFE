@@ -399,10 +399,10 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = VectorFieldParameters(
-        ptv_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_PTV_minA4_maxA150_maxD30_maxDiamDiff2",
+        ptv_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_3240",
         nx=73,
         ny=50,
-        scale=20,
+        scale=100,
         width=0.005,
         cmap="jet",
         show_grid=True,
