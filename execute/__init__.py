@@ -2,32 +2,59 @@
 Модуль execute для выполнения операций ParticleAnalysis.
 
 Содержит готовые к использованию скрипты с параметрами для GUI.
+
+Структура:
+- execute_filter/  - модули фильтрации (сортировка, бинаризация, intensity filter)
+- execute_analysis/ - модули анализа и визуализации (PTV, PIV)
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
-# Импорты основных модулей
-from .execute_sorting import SortingExecutor, SortingParameters
-from .execute_binarization import BinarizationExecutor, BinarizationParameters
-from .execute_intensity_filter import IntensityFilterExecutor, IntensityFilterParameters
-from .execute_ptv_analysis import PTVExecutor, PTVParameters
-from .execute_piv_analysis import PIVExecutor, PIVParameters
-from .execute_visualization import VisualizationExecutor, VisualizationParameters
-from .execute_vector_field import VectorFieldExecutor, VectorFieldParameters
+# Реэкспорт из подмодулей для обратной совместимости
+from .execute_filter import (
+    SortingExecutor,
+    SortingParameters,
+    BinarizationExecutor,
+    BinarizationParameters,
+    IntensityFilterExecutor,
+    IntensityFilterParameters,
+)
+
+from .execute_analysis import (
+    PTVExecutor,
+    PTVParameters,
+    PIVExecutor,
+    PIVParameters,
+    VisualizationExecutor,
+    VisualizationParameters,
+    VectorFieldExecutor,
+    VectorFieldParameters,
+    PIVVisualizationExecutor,
+    PIVVisualizationParameters,
+    PIVVectorFieldExecutor,
+    PIVVectorFieldParameters,
+)
 
 __all__ = [
+    # Filters
     'SortingExecutor',
     'SortingParameters',
     'BinarizationExecutor',
     'BinarizationParameters',
     'IntensityFilterExecutor',
     'IntensityFilterParameters',
+    # Analysis
     'PTVExecutor',
     'PTVParameters',
     'PIVExecutor',
     'PIVParameters',
+    # Visualization
     'VisualizationExecutor',
     'VisualizationParameters',
     'VectorFieldExecutor',
     'VectorFieldParameters',
+    'PIVVisualizationExecutor',
+    'PIVVisualizationParameters',
+    'PIVVectorFieldExecutor',
+    'PIVVectorFieldParameters',
 ]
