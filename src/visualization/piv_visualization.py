@@ -254,12 +254,22 @@ class PIVVisualizer:
 
                 for row in reader:
                     try:
+                        x = float(row['X'])
+                        y = float(row['Y'])
+                        u = float(row['U'])
+                        v = float(row['V'])
+                        magnitude = float(row['Magnitude'])
+
+                        # Пропускаем векторы с NaN значениями
+                        if np.isnan(x) or np.isnan(y) or np.isnan(u) or np.isnan(v) or np.isnan(magnitude):
+                            continue
+
                         vector = PIVVector(
-                            x=float(row['X']),
-                            y=float(row['Y']),
-                            u=float(row['U']),
-                            v=float(row['V']),
-                            magnitude=float(row['Magnitude'])
+                            x=x,
+                            y=y,
+                            u=u,
+                            v=v,
+                            magnitude=magnitude
                         )
                         vectors.append(vector)
                     except (KeyError, ValueError) as e:

@@ -438,7 +438,7 @@ def example_gui_usage():
         window_size=32,
         overlap=16,
         search_area_size=64,
-        dt=0.002,  # 2 мкс между кадрами в паре (_a и _b)
+        dt=1,  # 2 мкс между кадрами в паре (_a и _b)
         scaling_factor=1.0,
         sig2noise_threshold=1.3,
         enable_progress_callback=True
