@@ -553,11 +553,11 @@ def example_gui_usage():
         use_lucas_kanade=False,  # Farneback (dense)
         # Параметры Farneback
         pyr_scale=0.5,
-        levels=3,
-        winsize=15,
+        levels=4,
+        winsize=17,
         iterations=3,
         poly_n=5,
-        poly_sigma=1.2,
+        poly_sigma=1.3,
         grid_step=10,
         # Физические параметры
         dt=0.002,
