@@ -1,7 +1,7 @@
 """
 Модуль фильтрации векторов по значениям U и V для GUI ParticleAnalysis.
 
-Этот модуль позволяет фильтровать CSV файлы с векторами оптического потока
+Этот модуль позволяет фильтровать CSV файл с векторами оптического потока
 по допустимым диапазонам значений компонент скорости U и V.
 
 Входной формат CSV (разделитель ;):
@@ -16,7 +16,7 @@
 
 import sys
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Callable, List, Tuple, Dict, Any
 import logging
 import csv
@@ -33,40 +33,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class VectorFilterProgress:
-    """Класс для передачи информации о прогрессе фильтрации."""
-    current_file: str
-    total_files: int
-    processed_files: int
-    percentage: float
-    message: str
-
-
-@dataclass
 class VectorFilterResult:
     """Результат фильтрации векторов."""
     success: bool
-    total_files_processed: int
-    total_vectors_input: int
-    total_vectors_output: int
-    vectors_removed: int
-    removal_percentage: float
-    errors: List[str]
-    warnings: List[str]
-    output_files: List[str]
-
-
-@dataclass
-class VectorFilterStatistics:
-    """Статистика фильтрации для одного файла."""
     input_vectors: int
     output_vectors: int
-    removed_vectors: int
+    vectors_removed: int
     removal_percentage: float
     u_min_filtered: int  # Отфильтровано по U < u_min
     u_max_filtered: int  # Отфильтровано по U > u_max
     v_min_filtered: int  # Отфильтровано по V < v_min
     v_max_filtered: int  # Отфильтровано по V > v_max
+    errors: List[str]
+    output_file: str
 
 
 @dataclass
@@ -75,12 +54,12 @@ class VectorFilterParameters:
     Параметры фильтрации векторов для GUI.
 
     Все параметры должны устанавливаться через GUI элементы:
-    - input_path: путь к CSV файлу или папке с CSV файлами (через file dialog)
+    - input_file: путь к CSV файлу (через file dialog)
     - u_min, u_max: допустимый диапазон для компоненты U (через spinbox)
     - v_min, v_max: допустимый диапазон для компоненты V (через spinbox)
     """
     # ОБЯЗАТЕЛЬНЫЕ ПАРАМЕТРЫ
-    input_path: str  # Путь к CSV файлу или папке с CSV файлами
+    input_file: str  # Путь к CSV файлу
 
     # ПАРАМЕТРЫ ФИЛЬТРАЦИИ ПО U
     filter_u: bool = True  # Включить фильтрацию по U
@@ -98,13 +77,8 @@ class VectorFilterParameters:
     magnitude_max: float = 1000.0  # Максимальная магнитуда
 
     # ПАРАМЕТРЫ ВЫХОДА
-    output_folder: Optional[str] = None  # Папка для выходных файлов (None = та же папка)
-    suffix: str = "_filtered"  # Суффикс для выходных файлов
-
-    # ОПЦИОНАЛЬНЫЕ ПАРАМЕТРЫ
-    recursive: bool = False  # Рекурсивный поиск файлов в подпапках
-    file_pattern: str = "*.csv"  # Паттерн для поиска файлов
-    enable_progress_callback: bool = True  # Включить callback для прогресса
+    output_folder: Optional[str] = None  # Папка для выходного файла (None = та же папка)
+    suffix: str = "_filtered"  # Суффикс для выходного файла
 
     # GUI ПОДСКАЗКИ
     u_min_limit: float = -10000.0
@@ -121,10 +95,16 @@ class VectorFilterParameters:
         Returns:
             tuple[bool, str]: (success, error_message)
         """
-        # Проверка входного пути
-        input_path = Path(self.input_path)
+        # Проверка входного файла
+        input_path = Path(self.input_file)
         if not input_path.exists():
-            return False, f"Путь не существует: {self.input_path}"
+            return False, f"Файл не существует: {self.input_file}"
+
+        if not input_path.is_file():
+            return False, f"Путь не является файлом: {self.input_file}"
+
+        if input_path.suffix.lower() != '.csv':
+            return False, f"Файл должен иметь расширение .csv: {self.input_file}"
 
         # Проверка диапазонов U
         if self.filter_u:
@@ -162,16 +142,13 @@ class VectorFilterExecutor:
     Использование:
         1. Создать экземпляр VectorFilterExecutor
         2. Задать параметры через VectorFilterParameters
-        3. (Опционально) Установить callback для прогресса
-        4. Вызвать execute() для запуска фильтрации
-        5. Получить результат VectorFilterResult
+        3. Вызвать execute() для запуска фильтрации
+        4. Получить результат VectorFilterResult
     """
 
     def __init__(self):
         """Инициализация исполнителя фильтрации векторов."""
         self.parameters: Optional[VectorFilterParameters] = None
-        self._progress_callback: Optional[Callable[[VectorFilterProgress], None]] = None
-        self._cancel_requested: bool = False
 
         logger.info("Инициализирован VectorFilterExecutor")
 
@@ -194,6 +171,7 @@ class VectorFilterExecutor:
         self.parameters = parameters
 
         logger.info(f"Параметры установлены:")
+        logger.info(f"  Входной файл: {parameters.input_file}")
         if parameters.filter_u:
             logger.info(f"  U: [{parameters.u_min}, {parameters.u_max}]")
         if parameters.filter_v:
@@ -203,61 +181,14 @@ class VectorFilterExecutor:
 
         return True, ""
 
-    def set_progress_callback(self, callback: Callable[[VectorFilterProgress], None]) -> None:
-        """
-        Установка callback функции для отслеживания прогресса.
-
-        Args:
-            callback: Функция, принимающая VectorFilterProgress
-        """
-        self._progress_callback = callback
-        logger.debug("Установлен callback для прогресса")
-
-    def cancel_processing(self) -> None:
-        """Запрос на отмену обработки."""
-        self._cancel_requested = True
-        logger.info("Запрошена отмена обработки")
-
-    def _find_csv_files(self) -> List[Path]:
-        """
-        Поиск CSV файлов для обработки.
-
-        Returns:
-            Список путей к CSV файлам
-        """
-        if self.parameters is None:
-            return []
-
-        input_path = Path(self.parameters.input_path)
-
-        if input_path.is_file():
-            # Одиночный файл
-            if input_path.suffix.lower() == '.csv':
-                return [input_path]
-            return []
-
-        # Папка - ищем CSV файлы
-        if self.parameters.recursive:
-            files = list(input_path.rglob(self.parameters.file_pattern))
-        else:
-            files = list(input_path.glob(self.parameters.file_pattern))
-
-        # Исключаем уже отфильтрованные файлы
-        suffix = self.parameters.suffix
-        files = [f for f in files if not f.stem.endswith(suffix)]
-
-        return sorted(files)
-
-    def _get_output_path(self, input_path: Path) -> Path:
+    def _get_output_path(self) -> Path:
         """
         Получение пути к выходному файлу.
-
-        Args:
-            input_path: Путь к входному файлу
 
         Returns:
             Путь к выходному файлу
         """
+        input_path = Path(self.parameters.input_file)
         suffix = self.parameters.suffix if self.parameters else "_filtered"
 
         if self.parameters and self.parameters.output_folder:
@@ -324,80 +255,6 @@ class VectorFilterExecutor:
             logger.warning(f"Ошибка парсинга значений: {e}")
             return False, stats
 
-    def _process_file(self, input_path: Path) -> Tuple[VectorFilterStatistics, Optional[str], Optional[str]]:
-        """
-        Обработка одного CSV файла.
-
-        Args:
-            input_path: Путь к входному файлу
-
-        Returns:
-            Tuple[statistics, output_path, error]
-        """
-        stats = VectorFilterStatistics(
-            input_vectors=0,
-            output_vectors=0,
-            removed_vectors=0,
-            removal_percentage=0.0,
-            u_min_filtered=0,
-            u_max_filtered=0,
-            v_min_filtered=0,
-            v_max_filtered=0
-        )
-
-        output_path = self._get_output_path(input_path)
-
-        try:
-            # Чтение входного файла
-            with open(input_path, 'r', encoding='utf-8') as f_in:
-                reader = csv.DictReader(f_in, delimiter=';')
-                fieldnames = reader.fieldnames
-
-                if fieldnames is None:
-                    return stats, None, f"Не удалось прочитать заголовки: {input_path.name}"
-
-                # Проверка обязательных столбцов
-                required_columns = ['U', 'V']
-                for col in required_columns:
-                    if col not in fieldnames:
-                        return stats, None, f"Отсутствует столбец {col} в {input_path.name}"
-
-                rows = list(reader)
-                stats.input_vectors = len(rows)
-
-            # Фильтрация
-            filtered_rows = []
-            for row in rows:
-                passed, filter_stats = self._filter_vector(row)
-                if passed:
-                    filtered_rows.append(row)
-                else:
-                    stats.u_min_filtered += filter_stats.get('u_min', 0)
-                    stats.u_max_filtered += filter_stats.get('u_max', 0)
-                    stats.v_min_filtered += filter_stats.get('v_min', 0)
-                    stats.v_max_filtered += filter_stats.get('v_max', 0)
-
-            stats.output_vectors = len(filtered_rows)
-            stats.removed_vectors = stats.input_vectors - stats.output_vectors
-            stats.removal_percentage = (stats.removed_vectors / stats.input_vectors * 100) if stats.input_vectors > 0 else 0.0
-
-            # Запись выходного файла
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            with open(output_path, 'w', newline='', encoding='utf-8') as f_out:
-                writer = csv.DictWriter(f_out, fieldnames=fieldnames, delimiter=';')
-                writer.writeheader()
-                writer.writerows(filtered_rows)
-
-            logger.info(f"Обработан {input_path.name}: {stats.input_vectors} -> {stats.output_vectors} "
-                       f"(удалено {stats.removed_vectors}, {stats.removal_percentage:.1f}%)")
-
-            return stats, str(output_path), None
-
-        except Exception as e:
-            logger.error(f"Ошибка обработки {input_path.name}: {e}")
-            return stats, None, str(e)
-
     def execute(self) -> VectorFilterResult:
         """
         Выполнение фильтрации векторов.
@@ -409,38 +266,25 @@ class VectorFilterExecutor:
             logger.error("Параметры не установлены")
             return VectorFilterResult(
                 success=False,
-                total_files_processed=0,
-                total_vectors_input=0,
-                total_vectors_output=0,
+                input_vectors=0,
+                output_vectors=0,
                 vectors_removed=0,
                 removal_percentage=0.0,
+                u_min_filtered=0,
+                u_max_filtered=0,
+                v_min_filtered=0,
+                v_max_filtered=0,
                 errors=["Параметры не установлены"],
-                warnings=[],
-                output_files=[]
+                output_file=""
             )
 
-        self._cancel_requested = False
-
-        # Поиск файлов
-        csv_files = self._find_csv_files()
-
-        if not csv_files:
-            return VectorFilterResult(
-                success=False,
-                total_files_processed=0,
-                total_vectors_input=0,
-                total_vectors_output=0,
-                vectors_removed=0,
-                removal_percentage=0.0,
-                errors=["Не найдены CSV файлы для обработки"],
-                warnings=[],
-                output_files=[]
-            )
+        input_path = Path(self.parameters.input_file)
+        output_path = self._get_output_path()
 
         logger.info("=" * 60)
         logger.info("ЗАПУСК ФИЛЬТРАЦИИ ВЕКТОРОВ")
-        logger.info(f"Входной путь: {self.parameters.input_path}")
-        logger.info(f"Найдено файлов: {len(csv_files)}")
+        logger.info(f"Входной файл: {input_path}")
+        logger.info(f"Выходной файл: {output_path}")
         if self.parameters.filter_u:
             logger.info(f"Фильтр U: [{self.parameters.u_min}, {self.parameters.u_max}]")
         if self.parameters.filter_v:
@@ -449,85 +293,129 @@ class VectorFilterExecutor:
             logger.info(f"Фильтр Magnitude: [{self.parameters.magnitude_min}, {self.parameters.magnitude_max}]")
         logger.info("=" * 60)
 
-        total_files = len(csv_files)
-        processed = 0
-        total_input = 0
-        total_output = 0
+        # Статистика
+        input_vectors = 0
+        output_vectors = 0
+        u_min_filtered = 0
+        u_max_filtered = 0
+        v_min_filtered = 0
+        v_max_filtered = 0
         errors = []
-        warnings = []
-        output_files = []
 
-        for idx, csv_file in enumerate(csv_files):
-            if self._cancel_requested:
-                logger.info("Обработка отменена")
-                break
+        try:
+            # Чтение входного файла
+            with open(input_path, 'r', encoding='utf-8') as f_in:
+                reader = csv.DictReader(f_in, delimiter=';')
+                fieldnames = reader.fieldnames
 
-            # Прогресс
-            if self._progress_callback and self.parameters.enable_progress_callback:
-                progress = VectorFilterProgress(
-                    current_file=csv_file.name,
-                    total_files=total_files,
-                    processed_files=idx,
-                    percentage=(idx / total_files) * 100,
-                    message=f"Обработка {csv_file.name}"
-                )
-                self._progress_callback(progress)
+                if fieldnames is None:
+                    errors.append(f"Не удалось прочитать заголовки файла")
+                    return VectorFilterResult(
+                        success=False,
+                        input_vectors=0,
+                        output_vectors=0,
+                        vectors_removed=0,
+                        removal_percentage=0.0,
+                        u_min_filtered=0,
+                        u_max_filtered=0,
+                        v_min_filtered=0,
+                        v_max_filtered=0,
+                        errors=errors,
+                        output_file=""
+                    )
 
-            # Обработка файла
-            stats, output_path, error = self._process_file(csv_file)
+                # Проверка обязательных столбцов
+                required_columns = ['U', 'V']
+                for col in required_columns:
+                    if col not in fieldnames:
+                        errors.append(f"Отсутствует обязательный столбец: {col}")
+                        return VectorFilterResult(
+                            success=False,
+                            input_vectors=0,
+                            output_vectors=0,
+                            vectors_removed=0,
+                            removal_percentage=0.0,
+                            u_min_filtered=0,
+                            u_max_filtered=0,
+                            v_min_filtered=0,
+                            v_max_filtered=0,
+                            errors=errors,
+                            output_file=""
+                        )
 
-            if error:
-                errors.append(f"{csv_file.name}: {error}")
-            else:
-                processed += 1
-                total_input += stats.input_vectors
-                total_output += stats.output_vectors
-                if output_path:
-                    output_files.append(output_path)
+                rows = list(reader)
+                input_vectors = len(rows)
 
-        # Итоговый прогресс
-        if self._progress_callback and self.parameters.enable_progress_callback and not self._cancel_requested:
-            progress = VectorFilterProgress(
-                current_file="",
-                total_files=total_files,
-                processed_files=total_files,
-                percentage=100.0,
-                message="Завершено"
+            # Фильтрация
+            filtered_rows = []
+            for row in rows:
+                passed, filter_stats = self._filter_vector(row)
+                if passed:
+                    filtered_rows.append(row)
+                else:
+                    u_min_filtered += filter_stats.get('u_min', 0)
+                    u_max_filtered += filter_stats.get('u_max', 0)
+                    v_min_filtered += filter_stats.get('v_min', 0)
+                    v_max_filtered += filter_stats.get('v_max', 0)
+
+            output_vectors = len(filtered_rows)
+            vectors_removed = input_vectors - output_vectors
+            removal_percentage = (vectors_removed / input_vectors * 100) if input_vectors > 0 else 0.0
+
+            # Запись выходного файла
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(output_path, 'w', newline='', encoding='utf-8') as f_out:
+                writer = csv.DictWriter(f_out, fieldnames=fieldnames, delimiter=';')
+                writer.writeheader()
+                writer.writerows(filtered_rows)
+
+            logger.info("=" * 60)
+            logger.info("ЗАВЕРШЕНИЕ ФИЛЬТРАЦИИ ВЕКТОРОВ")
+            logger.info(f"Векторов на входе: {input_vectors}")
+            logger.info(f"Векторов на выходе: {output_vectors}")
+            logger.info(f"Удалено: {vectors_removed} ({removal_percentage:.1f}%)")
+            logger.info(f"  - по U < {self.parameters.u_min}: {u_min_filtered}")
+            logger.info(f"  - по U > {self.parameters.u_max}: {u_max_filtered}")
+            logger.info(f"  - по V < {self.parameters.v_min}: {v_min_filtered}")
+            logger.info(f"  - по V > {self.parameters.v_max}: {v_max_filtered}")
+            logger.info(f"Выходной файл: {output_path}")
+            logger.info("=" * 60)
+
+            return VectorFilterResult(
+                success=True,
+                input_vectors=input_vectors,
+                output_vectors=output_vectors,
+                vectors_removed=vectors_removed,
+                removal_percentage=removal_percentage,
+                u_min_filtered=u_min_filtered,
+                u_max_filtered=u_max_filtered,
+                v_min_filtered=v_min_filtered,
+                v_max_filtered=v_max_filtered,
+                errors=[],
+                output_file=str(output_path)
             )
-            self._progress_callback(progress)
 
-        vectors_removed = total_input - total_output
-        removal_percentage = (vectors_removed / total_input * 100) if total_input > 0 else 0.0
-        success = len(errors) == 0 and processed > 0
+        except Exception as e:
+            logger.error(f"Ошибка обработки: {e}")
+            errors.append(str(e))
+            return VectorFilterResult(
+                success=False,
+                input_vectors=input_vectors,
+                output_vectors=0,
+                vectors_removed=0,
+                removal_percentage=0.0,
+                u_min_filtered=0,
+                u_max_filtered=0,
+                v_min_filtered=0,
+                v_max_filtered=0,
+                errors=errors,
+                output_file=""
+            )
 
-        logger.info("=" * 60)
-        logger.info("ЗАВЕРШЕНИЕ ФИЛЬТРАЦИИ ВЕКТОРОВ")
-        logger.info(f"Успешно: {success}")
-        logger.info(f"Обработано файлов: {processed}/{total_files}")
-        logger.info(f"Всего векторов на входе: {total_input}")
-        logger.info(f"Всего векторов на выходе: {total_output}")
-        logger.info(f"Удалено векторов: {vectors_removed} ({removal_percentage:.1f}%)")
-        logger.info(f"Ошибок: {len(errors)}")
-        logger.info("=" * 60)
-
-        return VectorFilterResult(
-            success=success,
-            total_files_processed=processed,
-            total_vectors_input=total_input,
-            total_vectors_output=total_output,
-            vectors_removed=vectors_removed,
-            removal_percentage=removal_percentage,
-            errors=errors,
-            warnings=warnings,
-            output_files=output_files
-        )
-
-    def get_preview(self, file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_preview(self) -> Optional[Dict[str, Any]]:
         """
         Получение предварительного просмотра фильтрации.
-
-        Args:
-            file_path: Путь к файлу для предпросмотра (None = первый найденный)
 
         Returns:
             Словарь со статистикой предпросмотра или None
@@ -535,19 +423,13 @@ class VectorFilterExecutor:
         if self.parameters is None:
             return None
 
-        if file_path:
-            csv_file = Path(file_path)
-        else:
-            csv_files = self._find_csv_files()
-            if not csv_files:
-                return None
-            csv_file = csv_files[0]
+        input_path = Path(self.parameters.input_file)
 
-        if not csv_file.exists():
+        if not input_path.exists():
             return None
 
         try:
-            with open(csv_file, 'r', encoding='utf-8') as f:
+            with open(input_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f, delimiter=';')
                 rows = list(reader)
 
@@ -576,7 +458,7 @@ class VectorFilterExecutor:
             v_arr = np.array(v_values) if v_values else np.array([0])
 
             return {
-                'file': csv_file.name,
+                'file': input_path.name,
                 'total_vectors': total,
                 'would_pass': would_pass,
                 'would_fail': would_fail,
@@ -597,7 +479,7 @@ class VectorFilterExecutor:
 
 
 def run_vector_filter(
-    input_path: str,
+    input_file: str,
     u_min: float = -100.0,
     u_max: float = 100.0,
     v_min: float = -100.0,
@@ -605,37 +487,35 @@ def run_vector_filter(
     filter_u: bool = True,
     filter_v: bool = True,
     output_folder: Optional[str] = None,
-    suffix: str = "_filtered",
-    progress_callback: Optional[Callable] = None
+    suffix: str = "_filtered"
 ) -> VectorFilterResult:
     """
     Удобная функция для запуска фильтрации векторов без создания объектов.
 
     Args:
-        input_path: Путь к CSV файлу или папке
+        input_file: Путь к CSV файлу
         u_min: Минимально допустимое значение U
         u_max: Максимально допустимое значение U
         v_min: Минимально допустимое значение V
         v_max: Максимально допустимое значение V
         filter_u: Включить фильтрацию по U
         filter_v: Включить фильтрацию по V
-        output_folder: Папка для выходных файлов (None = та же папка)
-        suffix: Суффикс для выходных файлов
-        progress_callback: Callback функция для прогресса
+        output_folder: Папка для выходного файла (None = та же папка)
+        suffix: Суффикс для выходного файла
 
     Returns:
         VectorFilterResult с результатами
 
     Example:
         >>> result = run_vector_filter(
-        ...     input_path="path/to/vectors.csv",
+        ...     input_file="path/to/vectors.csv",
         ...     u_min=-50, u_max=50,
         ...     v_min=-50, v_max=50
         ... )
         >>> print(f"Удалено: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
     """
     params = VectorFilterParameters(
-        input_path=input_path,
+        input_file=input_file,
         filter_u=filter_u,
         u_min=u_min,
         u_max=u_max,
@@ -643,8 +523,7 @@ def run_vector_filter(
         v_min=v_min,
         v_max=v_max,
         output_folder=output_folder,
-        suffix=suffix,
-        enable_progress_callback=progress_callback is not None
+        suffix=suffix
     )
 
     executor = VectorFilterExecutor()
@@ -654,18 +533,17 @@ def run_vector_filter(
         logger.error(f"Ошибка установки параметров: {error_msg}")
         return VectorFilterResult(
             success=False,
-            total_files_processed=0,
-            total_vectors_input=0,
-            total_vectors_output=0,
+            input_vectors=0,
+            output_vectors=0,
             vectors_removed=0,
             removal_percentage=0.0,
+            u_min_filtered=0,
+            u_max_filtered=0,
+            v_min_filtered=0,
+            v_max_filtered=0,
             errors=[error_msg],
-            warnings=[],
-            output_files=[]
+            output_file=""
         )
-
-    if progress_callback:
-        executor.set_progress_callback(progress_callback)
 
     return executor.execute()
 
@@ -686,7 +564,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = VectorFilterParameters(
-        input_path=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000\cam_1",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000\cam_1\cam_1_lucas_kanade_sum.csv",
         filter_u=True,
         u_min=-50.0,
         u_max=50.0,
@@ -694,12 +572,11 @@ def example_gui_usage():
         v_min=-50.0,
         v_max=50.0,
         filter_magnitude=False,
-        suffix="_filtered",
-        enable_progress_callback=True
+        suffix="_filtered"
     )
 
     print(f"\nПараметры:")
-    print(f"  Входной путь: {parameters.input_path}")
+    print(f"  Входной файл: {parameters.input_file}")
     print(f"  Фильтр U: [{parameters.u_min}, {parameters.u_max}]")
     print(f"  Фильтр V: [{parameters.v_min}, {parameters.v_max}]")
     print(f"  Суффикс: {parameters.suffix}")
@@ -726,38 +603,27 @@ def example_gui_usage():
         print(f"  U: [{preview['u_min']:.3f}, {preview['u_max']:.3f}], mean={preview['u_mean']:.3f}")
         print(f"  V: [{preview['v_min']:.3f}, {preview['v_max']:.3f}], mean={preview['v_mean']:.3f}")
 
-    # === ШАГ 5: Установка callback для прогресса ===
-    def progress_callback(progress: VectorFilterProgress):
-        """Callback для обновления GUI."""
-        print(f"  {progress.percentage:.1f}% - {progress.message}")
-
-    executor.set_progress_callback(progress_callback)
-
-    # === ШАГ 6: Выполнение фильтрации ===
+    # === ШАГ 5: Выполнение фильтрации ===
     print("\nЗапуск фильтрации...")
     result = executor.execute()
 
-    # === ШАГ 7: Обработка результата ===
+    # === ШАГ 6: Обработка результата ===
     print("\n" + "=" * 60)
     print("РЕЗУЛЬТАТЫ")
     print("=" * 60)
     print(f"Успешно: {result.success}")
-    print(f"Обработано файлов: {result.total_files_processed}")
-    print(f"Векторов на входе: {result.total_vectors_input}")
-    print(f"Векторов на выходе: {result.total_vectors_output}")
+    print(f"Векторов на входе: {result.input_vectors}")
+    print(f"Векторов на выходе: {result.output_vectors}")
     print(f"Удалено: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
-    print(f"Ошибок: {len(result.errors)}")
-
-    if result.output_files:
-        print(f"\nВыходные файлы:")
-        for f in result.output_files[:5]:
-            print(f"  - {f}")
-        if len(result.output_files) > 5:
-            print(f"  ... и ещё {len(result.output_files) - 5} файлов")
+    print(f"  - по U < u_min: {result.u_min_filtered}")
+    print(f"  - по U > u_max: {result.u_max_filtered}")
+    print(f"  - по V < v_min: {result.v_min_filtered}")
+    print(f"  - по V > v_max: {result.v_max_filtered}")
+    print(f"Выходной файл: {result.output_file}")
 
     if result.errors:
         print("\nОшибки:")
-        for error in result.errors[:5]:
+        for error in result.errors:
             print(f"  - {error}")
 
     print("=" * 60)

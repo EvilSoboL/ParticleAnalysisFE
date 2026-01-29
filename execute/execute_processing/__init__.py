@@ -11,8 +11,6 @@ from .vector_filter import (
     VectorFilterExecutor,
     VectorFilterParameters,
     VectorFilterResult,
-    VectorFilterProgress,
-    VectorFilterStatistics,
     run_vector_filter
 )
 
@@ -20,7 +18,5 @@ __all__ = [
     'VectorFilterExecutor',
     'VectorFilterParameters',
     'VectorFilterResult',
-    'VectorFilterProgress',
-    'VectorFilterStatistics',
     'run_vector_filter',
 ]
