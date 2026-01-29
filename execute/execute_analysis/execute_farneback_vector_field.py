@@ -437,7 +437,7 @@ def example_gui_usage():
     parameters = FarnebackVectorFieldParameters(
         farneback_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\Farneback_2000",
         method="farneback",
-        nx=50,
+        nx=74,
         ny=50,
         scale=20,
         width=0.005,

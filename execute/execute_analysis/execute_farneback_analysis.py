@@ -554,11 +554,11 @@ def example_gui_usage():
         # Параметры Farneback
         pyr_scale=0.5,
         levels=4,
-        winsize=17,
+        winsize=10,
         iterations=3,
         poly_n=5,
         poly_sigma=1.3,
-        grid_step=10,
+        grid_step=30,
         # Физические параметры
         dt=0.002,
         scaling_factor=1.0,

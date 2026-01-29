@@ -156,7 +156,7 @@ if __name__ == "__main__":
     img_b_path = r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\cam_2\1_b.png"
 
     # === Параметры ===
-    THRESHOLD = 2000
+    THRESHOLD = 1500
     OUTPUT_RANGE = (50, 255)
 
     # === Директория для сохранения ===
