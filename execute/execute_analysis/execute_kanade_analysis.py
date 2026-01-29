@@ -495,7 +495,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = KanadeAnalysisParameters(
-        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\small_farneback_filtered_2000",
+        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\farneback_filtered_2000",
         # Параметры детекции точек
         max_corners=10_000,
         quality_level=0.01,
@@ -508,7 +508,7 @@ def example_gui_usage():
         epsilon=0.01,
         # Физические параметры
         dt=0.000002,
-        scaling_factor=0.0075,
+        scaling_factor=7.5,
         enable_progress_callback=True
     )
 

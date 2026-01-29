@@ -471,9 +471,9 @@ def example_gui_usage():
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = KanadeVectorFieldParameters(
         kanade_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000",
-        nx=50,
+        nx=73,
         ny=50,
-        scale=20,
+        scale=200,
         width=0.005,
         cmap="jet",
         show_grid=True,
