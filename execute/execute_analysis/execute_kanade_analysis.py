@@ -495,20 +495,20 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = KanadeAnalysisParameters(
-        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\farneback_filtered_2000",
+        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\small_farneback_filtered_2000",
         # Параметры детекции точек
-        max_corners=1000,
+        max_corners=10_000,
         quality_level=0.01,
         min_distance=10,
         block_size=7,
         # Параметры Lucas-Kanade
-        win_size=21,
-        max_level=2,
-        max_iterations=30,
+        win_size=41,
+        max_level=1,
+        max_iterations=5,
         epsilon=0.01,
         # Физические параметры
-        dt=0.002,
-        scaling_factor=1.0,
+        dt=0.000002,
+        scaling_factor=0.0075,
         enable_progress_callback=True
     )
 
