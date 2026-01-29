@@ -7,7 +7,6 @@
 
 Анализ оптического потока:
 - Farneback (dense) - вычисление потока для каждого пикселя
-- Lucas-Kanade (sparse) - вычисление потока на выбранных точках (частицах)
 - Экспорт результатов в CSV формат
 
 Входные данные: изображения после filter_farneback_kanade (8-bit PNG, пары _a и _b)
@@ -46,16 +45,11 @@ class FarnebackAnalysisParameters:
 
     Все параметры должны устанавливаться через GUI элементы:
     - input_folder: путь к папке farneback_filtered_XXXX (через file dialog)
-    - use_lucas_kanade: использовать Lucas-Kanade вместо Farneback (checkbox)
     - Параметры Farneback (через spinbox/slider)
-    - Параметры Lucas-Kanade (через spinbox/slider)
     - enable_progress_callback: включить обратную связь прогресса (checkbox)
     """
     # ОБЯЗАТЕЛЬНЫЕ ПАРАМЕТРЫ
     input_folder: str  # Путь к папке farneback_filtered_XXXX с изображениями
-
-    # ВЫБОР МЕТОДА
-    use_lucas_kanade: bool = False  # True = Lucas-Kanade (sparse), False = Farneback (dense)
 
     # ПАРАМЕТРЫ FARNEBACK
     pyr_scale: float = 0.5  # Масштаб пирамиды (0-1)
@@ -69,13 +63,6 @@ class FarnebackAnalysisParameters:
     min_magnitude: float = 0.0  # Минимальная магнитуда для фильтрации
     max_magnitude: float = 100.0  # Максимальная магнитуда для фильтрации
     grid_step: int = 10  # Шаг сетки для экспорта векторов
-
-    # ПАРАМЕТРЫ LUCAS-KANADE
-    max_corners: int = 500  # Максимальное количество точек для трекинга
-    quality_level: float = 0.01  # Минимальное качество угла (0-1)
-    min_distance: int = 10  # Минимальное расстояние между точками
-    lk_win_size: int = 21  # Размер окна для вычисления потока (нечётное)
-    max_level: int = 2  # Количество уровней пирамиды
 
     # ФИЗИЧЕСКИЕ ПАРАМЕТРЫ
     dt: float = 0.002  # Временной интервал между кадрами в паре (мс)
@@ -112,27 +99,6 @@ class FarnebackAnalysisParameters:
     grid_step_min: int = 1
     grid_step_max: int = 50
     grid_step_default: int = 10
-
-    # GUI ПОДСКАЗКИ - LUCAS-KANADE
-    max_corners_min: int = 50
-    max_corners_max: int = 5000
-    max_corners_default: int = 500
-
-    quality_level_min: float = 0.001
-    quality_level_max: float = 0.1
-    quality_level_default: float = 0.01
-    quality_level_step: float = 0.001
-
-    min_distance_min: int = 1
-    min_distance_max: int = 50
-    min_distance_default: int = 10
-
-    lk_win_size_options: tuple = (5, 7, 11, 15, 21, 31)
-    lk_win_size_default: int = 21
-
-    max_level_min: int = 0
-    max_level_max: int = 5
-    max_level_default: int = 2
 
     def validate(self) -> tuple[bool, str]:
         """
@@ -175,22 +141,6 @@ class FarnebackAnalysisParameters:
 
         if self.grid_step < 1:
             return False, f"grid_step должен быть >= 1: {self.grid_step}"
-
-        # Проверка параметров Lucas-Kanade
-        if self.max_corners < 1:
-            return False, f"max_corners должен быть >= 1: {self.max_corners}"
-
-        if not (0 < self.quality_level <= 1):
-            return False, f"quality_level должен быть в диапазоне (0, 1]: {self.quality_level}"
-
-        if self.min_distance < 1:
-            return False, f"min_distance должен быть >= 1: {self.min_distance}"
-
-        if self.lk_win_size < 3 or self.lk_win_size % 2 == 0:
-            return False, f"lk_win_size должен быть нечётным и >= 3: {self.lk_win_size}"
-
-        if self.max_level < 0:
-            return False, f"max_level должен быть >= 0: {self.max_level}"
 
         # Проверка физических параметров
         if self.dt <= 0:
@@ -260,20 +210,7 @@ class FarnebackAnalysisExecutor:
         ):
             return False, "Не удалось установить параметры Farneback"
 
-        # Установка параметров Lucas-Kanade
-        if not self.analyzer.set_lucas_kanade_config(
-            max_corners=parameters.max_corners,
-            quality_level=parameters.quality_level,
-            min_distance=parameters.min_distance,
-            win_size=parameters.lk_win_size,
-            max_level=parameters.max_level,
-            dt=parameters.dt,
-            scaling_factor=parameters.scaling_factor
-        ):
-            return False, "Не удалось установить параметры Lucas-Kanade"
-
-        method = "Lucas-Kanade" if parameters.use_lucas_kanade else "Farneback"
-        logger.info(f"Параметры установлены. Метод: {method}")
+        logger.info("Параметры Farneback установлены")
         return True, ""
 
     def set_progress_callback(self, callback: Callable[[FarnebackProgress], None]) -> None:
@@ -333,29 +270,20 @@ class FarnebackAnalysisExecutor:
                 output_folder=""
             )
 
-        method = "Lucas-Kanade" if self.parameters.use_lucas_kanade else "Farneback"
-
         logger.info("=" * 60)
-        logger.info(f"ЗАПУСК АНАЛИЗА ОПТИЧЕСКОГО ПОТОКА ({method})")
+        logger.info("ЗАПУСК АНАЛИЗА ОПТИЧЕСКОГО ПОТОКА FARNEBACK")
         logger.info(f"Входная папка: {self.parameters.input_folder}")
-
-        if self.parameters.use_lucas_kanade:
-            logger.info(f"Параметры LK: max_corners={self.parameters.max_corners}, "
-                       f"quality_level={self.parameters.quality_level}, "
-                       f"win_size={self.parameters.lk_win_size}")
-        else:
-            logger.info(f"Параметры FB: pyr_scale={self.parameters.pyr_scale}, "
-                       f"levels={self.parameters.levels}, "
-                       f"winsize={self.parameters.winsize}, "
-                       f"grid_step={self.parameters.grid_step}")
-
+        logger.info(f"Параметры: pyr_scale={self.parameters.pyr_scale}, "
+                   f"levels={self.parameters.levels}, "
+                   f"winsize={self.parameters.winsize}, "
+                   f"grid_step={self.parameters.grid_step}")
         logger.info("=" * 60)
 
         # Выполнение анализа
-        result = self.analyzer.process_all(use_lucas_kanade=self.parameters.use_lucas_kanade)
+        result = self.analyzer.process_all(use_lucas_kanade=False)
 
         logger.info("=" * 60)
-        logger.info(f"ЗАВЕРШЕНИЕ АНАЛИЗА ({method})")
+        logger.info("ЗАВЕРШЕНИЕ АНАЛИЗА FARNEBACK")
         logger.info(f"Успешно: {result.success}")
         logger.info(f"Обработано пар: {result.total_pairs_processed}")
         logger.info(f"  cam_1: {result.cam1_pairs_count} пар")
@@ -401,16 +329,15 @@ class FarnebackAnalysisExecutor:
         preview = self.analyzer.get_preview(
             camera_name,
             pair_index,
-            use_lucas_kanade=self.parameters.use_lucas_kanade
+            use_lucas_kanade=False
         )
 
         if preview is None:
             logger.warning(f"Не удалось создать предпросмотр для {camera_name}")
             return None
 
-        method = preview.get('method', 'unknown')
         logger.info(
-            f"Создан предпросмотр для {camera_name} ({method}): "
+            f"Создан предпросмотр для {camera_name} (Farneback): "
             f"средняя магнитуда: {preview['mean_magnitude']:.2f}"
         )
 
@@ -431,7 +358,6 @@ class FarnebackAnalysisExecutor:
 
 def run_farneback_analysis(
     input_folder: str,
-    use_lucas_kanade: bool = False,
     # Параметры Farneback
     pyr_scale: float = 0.5,
     levels: int = 3,
@@ -440,12 +366,6 @@ def run_farneback_analysis(
     poly_n: int = 5,
     poly_sigma: float = 1.2,
     grid_step: int = 10,
-    # Параметры Lucas-Kanade
-    max_corners: int = 500,
-    quality_level: float = 0.01,
-    min_distance: int = 10,
-    lk_win_size: int = 21,
-    max_level: int = 2,
     # Физические параметры
     dt: float = 0.002,
     scaling_factor: float = 1.0,
@@ -453,11 +373,10 @@ def run_farneback_analysis(
     progress_callback: Optional[Callable] = None
 ) -> FarnebackResult:
     """
-    Удобная функция для запуска анализа оптического потока без создания объектов.
+    Удобная функция для запуска анализа оптического потока Farneback без создания объектов.
 
     Args:
         input_folder: Путь к папке farneback_filtered_XXXX
-        use_lucas_kanade: Использовать Lucas-Kanade вместо Farneback
         pyr_scale: Масштаб пирамиды (0-1)
         levels: Количество уровней пирамиды
         winsize: Размер окна усреднения
@@ -465,11 +384,6 @@ def run_farneback_analysis(
         poly_n: Размер окрестности (5 или 7)
         poly_sigma: Стандартное отклонение гауссиана
         grid_step: Шаг сетки для экспорта
-        max_corners: Максимальное количество точек (LK)
-        quality_level: Минимальное качество угла (LK)
-        min_distance: Минимальное расстояние между точками (LK)
-        lk_win_size: Размер окна для LK
-        max_level: Количество уровней пирамиды (LK)
         dt: Временной интервал между кадрами
         scaling_factor: Масштабный коэффициент
         progress_callback: Callback функция для прогресса
@@ -480,7 +394,6 @@ def run_farneback_analysis(
     Example:
         >>> result = run_farneback_analysis(
         ...     input_folder="path/to/farneback_filtered_2000",
-        ...     use_lucas_kanade=False,
         ...     winsize=15,
         ...     grid_step=10
         ... )
@@ -489,7 +402,6 @@ def run_farneback_analysis(
     # Создание параметров
     params = FarnebackAnalysisParameters(
         input_folder=input_folder,
-        use_lucas_kanade=use_lucas_kanade,
         pyr_scale=pyr_scale,
         levels=levels,
         winsize=winsize,
@@ -497,11 +409,6 @@ def run_farneback_analysis(
         poly_n=poly_n,
         poly_sigma=poly_sigma,
         grid_step=grid_step,
-        max_corners=max_corners,
-        quality_level=quality_level,
-        min_distance=min_distance,
-        lk_win_size=lk_win_size,
-        max_level=max_level,
         dt=dt,
         scaling_factor=scaling_factor,
         enable_progress_callback=progress_callback is not None
@@ -550,7 +457,6 @@ def example_gui_usage():
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = FarnebackAnalysisParameters(
         input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\farneback_filtered_2000",
-        use_lucas_kanade=False,  # Farneback (dense)
         # Параметры Farneback
         pyr_scale=0.5,
         levels=4,
@@ -565,21 +471,14 @@ def example_gui_usage():
         enable_progress_callback=True
     )
 
-    method = "Lucas-Kanade" if parameters.use_lucas_kanade else "Farneback"
-    print(f"\nМетод: {method}")
+    print(f"\nМетод: Farneback")
     print(f"\nПараметры:")
     print(f"  Входная папка: {parameters.input_folder}")
-
-    if not parameters.use_lucas_kanade:
-        print(f"  pyr_scale: {parameters.pyr_scale}")
-        print(f"  levels: {parameters.levels}")
-        print(f"  winsize: {parameters.winsize}")
-        print(f"  iterations: {parameters.iterations}")
-        print(f"  grid_step: {parameters.grid_step}")
-    else:
-        print(f"  max_corners: {parameters.max_corners}")
-        print(f"  quality_level: {parameters.quality_level}")
-        print(f"  lk_win_size: {parameters.lk_win_size}")
+    print(f"  pyr_scale: {parameters.pyr_scale}")
+    print(f"  levels: {parameters.levels}")
+    print(f"  winsize: {parameters.winsize}")
+    print(f"  iterations: {parameters.iterations}")
+    print(f"  grid_step: {parameters.grid_step}")
 
     # === ШАГ 2: Создание исполнителя ===
     executor = FarnebackAnalysisExecutor()
@@ -609,10 +508,6 @@ def example_gui_usage():
         print(f"  Средняя магнитуда: {preview['mean_magnitude']:.3f}")
         print(f"  Макс. магнитуда: {preview['max_magnitude']:.3f}")
 
-        if preview['method'] == 'lucas_kanade':
-            print(f"  Найдено точек: {preview['total_detected']}")
-            print(f"  Отслежено точек: {preview['total_tracked']}")
-
     # === ШАГ 6: Установка callback для прогресса (для GUI progress bar) ===
     def progress_callback(progress: FarnebackProgress):
         """Callback для обновления GUI."""
@@ -624,7 +519,7 @@ def example_gui_usage():
     executor.set_progress_callback(progress_callback)
 
     # === ШАГ 7: Выполнение анализа ===
-    print(f"\nЗапуск анализа ({method})...")
+    print("\nЗапуск анализа Farneback...")
     result = executor.execute()
 
     # === ШАГ 8: Обработка результата ===
