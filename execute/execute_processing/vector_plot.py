@@ -353,16 +353,16 @@ class VectorPlotExecutor:
                 logger.warning(f"Не удалось загрузить фоновое изображение: {e}")
 
         # Построение quiver
+        # scale: чем меньше значение, тем длиннее стрелки
+        # arrow_scale=1.0 даёт базовый размер, >1 увеличивает, <1 уменьшает
         quiver = ax.quiver(
             X, Y, U, V,
             colors,
             cmap=self.parameters.colormap,
-            scale=self.parameters.arrow_scale * 50,  # Нормализация масштаба
+            scale=1.0 / self.parameters.arrow_scale,
             width=self.parameters.arrow_width,
             headwidth=self.parameters.arrow_headwidth,
-            headlength=self.parameters.arrow_headlength,
-            angles='xy',
-            scale_units='xy'
+            headlength=self.parameters.arrow_headlength
         )
 
         # Colorbar
@@ -458,12 +458,10 @@ class VectorPlotExecutor:
             X, Y, U, V,
             colors,
             cmap=self.parameters.colormap,
-            scale=self.parameters.arrow_scale * 50,
+            scale=1.0 / self.parameters.arrow_scale,
             width=self.parameters.arrow_width,
             headwidth=self.parameters.arrow_headwidth,
-            headlength=self.parameters.arrow_headlength,
-            angles='xy',
-            scale_units='xy'
+            headlength=self.parameters.arrow_headlength
         )
 
         if self.parameters.show_colorbar:
