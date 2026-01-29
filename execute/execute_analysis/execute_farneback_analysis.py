@@ -9,7 +9,7 @@
 - Farneback (dense) - вычисление потока для каждого пикселя
 - Экспорт результатов в CSV формат
 
-Входные данные: изображения после filter_farneback_kanade (8-bit PNG, пары _a и _b)
+Входные данные: изображения после фильтрации (8-bit PNG, пары _a и _b)
 
 Автор: ParticleAnalysis Team
 Версия: 1.0
@@ -280,7 +280,7 @@ class FarnebackAnalysisExecutor:
         logger.info("=" * 60)
 
         # Выполнение анализа
-        result = self.analyzer.process_all(use_lucas_kanade=False)
+        result = self.analyzer.process_all()
 
         logger.info("=" * 60)
         logger.info("ЗАВЕРШЕНИЕ АНАЛИЗА FARNEBACK")
@@ -326,11 +326,7 @@ class FarnebackAnalysisExecutor:
             logger.warning("Параметры не установлены для предпросмотра")
             return None
 
-        preview = self.analyzer.get_preview(
-            camera_name,
-            pair_index,
-            use_lucas_kanade=False
-        )
+        preview = self.analyzer.get_preview(camera_name, pair_index)
 
         if preview is None:
             logger.warning(f"Не удалось создать предпросмотр для {camera_name}")
