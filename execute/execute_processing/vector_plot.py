@@ -604,7 +604,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров ===
     parameters = VectorPlotParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\test_vectors_averaged.csv",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000\cam_1\cam_1_lucas_kanade_sum_filtered_averaged.csv",
         figure_width=16.0,
         figure_height=12.0,
         dpi=150,
