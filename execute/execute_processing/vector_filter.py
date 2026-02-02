@@ -5,13 +5,12 @@
 по допустимым диапазонам значений компонент скорости U и V.
 
 Входной формат CSV (разделитель ;):
-    X0;Y0;X1;Y1;U;V;Magnitude;Angle
-    (столбцы Magnitude и Angle опциональны)
+    X0;Y0;dx;dy;L;Diameter;Area
 
 Выходной формат: исходный_файл_filtered.csv
 
 Автор: ParticleAnalysis Team
-Версия: 1.0
+Версия: 1.1
 """
 
 import sys
@@ -146,9 +145,17 @@ class VectorFilterExecutor:
         4. Получить результат VectorFilterResult
     """
 
+    # Допустимые имена колонок для компонент вектора
+    U_COLUMN_NAMES = ('U', 'dx')
+    V_COLUMN_NAMES = ('V', 'dy')
+    MAGNITUDE_COLUMN_NAMES = ('Magnitude', 'L')
+
     def __init__(self):
         """Инициализация исполнителя фильтрации векторов."""
         self.parameters: Optional[VectorFilterParameters] = None
+        self._u_col: Optional[str] = None  # Фактическое имя колонки U/dx
+        self._v_col: Optional[str] = None  # Фактическое имя колонки V/dy
+        self._mag_col: Optional[str] = None  # Фактическое имя колонки Magnitude/L
 
         logger.info("Инициализирован VectorFilterExecutor")
 
@@ -199,6 +206,48 @@ class VectorFilterExecutor:
         output_name = f"{input_path.stem}{suffix}{input_path.suffix}"
         return output_folder / output_name
 
+    def _detect_columns(self, fieldnames: List[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        Определение имён колонок U, V и Magnitude в CSV файле.
+
+        Поддерживаются имена: U/V, dx/dy, Magnitude/L.
+        Если точного совпадения нет для U/V, используются 3-я и 4-я колонки (индексы 2, 3).
+
+        Args:
+            fieldnames: Список имён колонок
+
+        Returns:
+            Tuple[u_col, v_col, mag_col]: имена найденных колонок
+        """
+        u_col = None
+        v_col = None
+        mag_col = None
+
+        for name in self.U_COLUMN_NAMES:
+            if name in fieldnames:
+                u_col = name
+                break
+
+        for name in self.V_COLUMN_NAMES:
+            if name in fieldnames:
+                v_col = name
+                break
+
+        for name in self.MAGNITUDE_COLUMN_NAMES:
+            if name in fieldnames:
+                mag_col = name
+                break
+
+        # Фоллбэк на 3-ю и 4-ю колонки
+        if u_col is None and len(fieldnames) >= 3:
+            u_col = fieldnames[2]
+            logger.info(f"Колонка U не найдена, используется 3-я колонка: '{u_col}'")
+        if v_col is None and len(fieldnames) >= 4:
+            v_col = fieldnames[3]
+            logger.info(f"Колонка V не найдена, используется 4-я колонка: '{v_col}'")
+
+        return u_col, v_col, mag_col
+
     def _filter_vector(self, row: Dict[str, str]) -> Tuple[bool, Dict[str, int]]:
         """
         Проверка вектора на соответствие фильтрам.
@@ -221,9 +270,9 @@ class VectorFilterExecutor:
         }
 
         try:
-            u = float(row.get('U', 0))
-            v = float(row.get('V', 0))
-            magnitude = float(row.get('Magnitude', 0)) if 'Magnitude' in row else None
+            u = float(row.get(self._u_col, 0))
+            v = float(row.get(self._v_col, 0))
+            magnitude = float(row.get(self._mag_col, 0)) if self._mag_col and self._mag_col in row else None
 
             # Фильтрация по U
             if self.parameters.filter_u:
@@ -324,24 +373,34 @@ class VectorFilterExecutor:
                         output_file=""
                     )
 
-                # Проверка обязательных столбцов
-                required_columns = ['U', 'V']
-                for col in required_columns:
-                    if col not in fieldnames:
-                        errors.append(f"Отсутствует обязательный столбец: {col}")
-                        return VectorFilterResult(
-                            success=False,
-                            input_vectors=0,
-                            output_vectors=0,
-                            vectors_removed=0,
-                            removal_percentage=0.0,
-                            u_min_filtered=0,
-                            u_max_filtered=0,
-                            v_min_filtered=0,
-                            v_max_filtered=0,
-                            errors=errors,
-                            output_file=""
-                        )
+                # Определение колонок U, V и Magnitude
+                self._u_col, self._v_col, self._mag_col = self._detect_columns(fieldnames)
+
+                if self._u_col is None or self._v_col is None:
+                    missing = []
+                    if self._u_col is None:
+                        missing.append("U/dx")
+                    if self._v_col is None:
+                        missing.append("V/dy")
+                    errors.append(
+                        f"Не удалось определить колонки: {', '.join(missing)}. "
+                        f"Ожидаются U/V или dx/dy (или минимум 4 колонки)"
+                    )
+                    return VectorFilterResult(
+                        success=False,
+                        input_vectors=0,
+                        output_vectors=0,
+                        vectors_removed=0,
+                        removal_percentage=0.0,
+                        u_min_filtered=0,
+                        u_max_filtered=0,
+                        v_min_filtered=0,
+                        v_max_filtered=0,
+                        errors=errors,
+                        output_file=""
+                    )
+
+                logger.info(f"Колонки: U='{self._u_col}', V='{self._v_col}', Magnitude='{self._mag_col}'")
 
                 rows = list(reader)
                 input_vectors = len(rows)
@@ -431,6 +490,12 @@ class VectorFilterExecutor:
         try:
             with open(input_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f, delimiter=';')
+                fieldnames = reader.fieldnames or []
+
+                # Определение колонок, если ещё не определены
+                if self._u_col is None or self._v_col is None:
+                    self._u_col, self._v_col, self._mag_col = self._detect_columns(fieldnames)
+
                 rows = list(reader)
 
             total = len(rows)
@@ -448,8 +513,8 @@ class VectorFilterExecutor:
                     would_fail += 1
 
                 try:
-                    u_values.append(float(row.get('U', 0)))
-                    v_values.append(float(row.get('V', 0)))
+                    u_values.append(float(row.get(self._u_col, 0)))
+                    v_values.append(float(row.get(self._v_col, 0)))
                 except (ValueError, TypeError):
                     pass
 
@@ -564,13 +629,13 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = VectorFilterParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000\cam_1\cam_1_lucas_kanade_sum.csv",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_2500\cam_1_pairs_sum.csv",
         filter_u=True,
-        u_min=-50.0,
-        u_max=50.0,
+        u_min=0,
+        u_max=30,
         filter_v=True,
-        v_min=-50.0,
-        v_max=50.0,
+        v_min=-5.0,
+        v_max=5.0,
         filter_magnitude=False,
         suffix="_filtered"
     )
