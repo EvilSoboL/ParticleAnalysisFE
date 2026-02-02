@@ -466,12 +466,11 @@ class PTVAnalyzer:
                 writer = csv.writer(f, delimiter=';')
 
                 # Заголовки
-                writer.writerow(['ID', 'Area', 'Center_X', 'Center_Y', 'Diameter'])
+                writer.writerow(['Area', 'Center_X', 'Center_Y', 'Diameter'])
 
                 # Данные
                 for p in particles:
                     writer.writerow([
-                        p.id,
                         p.area,
                         f"{p.center_x:.2f}",
                         f"{p.center_y:.2f}",
@@ -507,13 +506,12 @@ class PTVAnalyzer:
 
                 # Заголовки
                 writer.writerow([
-                    'ID', 'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area'
+                    'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area'
                 ])
 
                 # Данные
                 for p in pairs:
                     writer.writerow([
-                        p.id,
                         f"{p.x0:.2f}",
                         f"{p.y0:.2f}",
                         f"{p.dx:.2f}",
@@ -537,8 +535,8 @@ class PTVAnalyzer:
         """
         Создание суммарного CSV файла со всеми парами из папки.
 
-        Читает все CSV файлы из указанной папки, объединяет их в один файл
-        с перенумерацией ID. Применяет фильтры:
+        Читает все CSV файлы из указанной папки, объединяет их в один файл.
+        Применяет фильтры:
         - L > 0
         - dy в диапазоне [-5, 5]
         - dx в диапазоне [0, 20]
@@ -563,7 +561,6 @@ class PTVAnalyzer:
                 return False
 
             all_pairs_data = []
-            pair_id = 1
             filtered_count = 0
 
             # Чтение всех файлов пар
@@ -574,20 +571,18 @@ class PTVAnalyzer:
                         next(reader)  # Пропускаем заголовок
 
                         for row in reader:
-                            if len(row) == 8:  # Проверка корректности строки
+                            if len(row) == 7:  # Проверка корректности строки
                                 # Извлечение значений для фильтрации
+                                # Колонки: X0, Y0, dx, dy, L, Diameter, Area
                                 try:
-                                    dx = float(row[3])
-                                    dy = float(row[4])
-                                    length = float(row[5])
+                                    dx = float(row[2])
+                                    dy = float(row[3])
+                                    length = float(row[4])
 
                                     # Применение фильтров:
                                     # L > 0, dy ∈ [-5, 5], dx ∈ [0, 20]
                                     if length > 0 and -5 <= dy <= 5 and 0 <= dx <= 20:
-                                        # Перенумеровываем ID и сохраняем остальные данные
-                                        new_row = [str(pair_id)] + row[1:]
-                                        all_pairs_data.append(new_row)
-                                        pair_id += 1
+                                        all_pairs_data.append(row)
                                     else:
                                         filtered_count += 1
 
@@ -609,7 +604,7 @@ class PTVAnalyzer:
 
                 # Заголовки
                 writer.writerow([
-                    'ID', 'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area'
+                    'X0', 'Y0', 'dx', 'dy', 'L', 'Diameter', 'Area'
                 ])
 
                 # Данные
