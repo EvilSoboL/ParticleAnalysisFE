@@ -536,10 +536,6 @@ class PTVAnalyzer:
         Создание суммарного CSV файла со всеми парами из папки.
 
         Читает все CSV файлы из указанной папки, объединяет их в один файл.
-        Применяет фильтры:
-        - L > 0
-        - dy в диапазоне [-5, 5]
-        - dx в диапазоне [0, 20]
 
         Args:
             pairs_folder: Папка с CSV файлами пар (например, cam_1_pairs)
@@ -561,7 +557,6 @@ class PTVAnalyzer:
                 return False
 
             all_pairs_data = []
-            filtered_count = 0
 
             # Чтение всех файлов пар
             for pair_file in pair_files:
@@ -572,25 +567,7 @@ class PTVAnalyzer:
 
                         for row in reader:
                             if len(row) == 7:  # Проверка корректности строки
-                                # Извлечение значений для фильтрации
-                                # Колонки: X0, Y0, dx, dy, L, Diameter, Area
-                                try:
-                                    dx = float(row[2])
-                                    dy = float(row[3])
-                                    length = float(row[4])
-
-                                    # Применение фильтров:
-                                    # L > 0, dy ∈ [-5, 5], dx ∈ [0, 20]
-                                    if length > 0 and -5 <= dy <= 5 and 0 <= dx <= 20:
-                                        all_pairs_data.append(row)
-                                    else:
-                                        filtered_count += 1
-
-                                except (ValueError, IndexError) as e:
-                                    logger.warning(
-                                        f"Пропущена некорректная строка в {pair_file.name}: {e}"
-                                    )
-                                    continue
+                                all_pairs_data.append(row)
 
                 except Exception as e:
                     logger.error(f"Ошибка чтения {pair_file.name}: {e}")
@@ -612,8 +589,7 @@ class PTVAnalyzer:
 
             logger.info(
                 f"Создан суммарный файл: {output_path.name} "
-                f"(пар после фильтрации: {len(all_pairs_data)}, "
-                f"отфильтровано: {filtered_count})"
+                f"(пар: {len(all_pairs_data)})"
             )
             return True
 

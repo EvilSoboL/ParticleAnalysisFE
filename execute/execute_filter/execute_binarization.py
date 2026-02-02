@@ -315,8 +315,8 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = BinarizationParameters(
-        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted",
-        threshold=3240,
+        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\without_filter",
+        threshold=2_000,
         enable_progress_callback=True
     )
 

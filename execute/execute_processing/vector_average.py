@@ -5,15 +5,14 @@
 регулярной сетки, заданной на плоскости.
 
 Входной формат CSV (разделитель ;):
-    X0;Y0;X1;Y1;U;V;Magnitude;Angle
-    или минимально:
-    X0;Y0;U;V
+    X0;Y0;dx;dy;L;Diameter;Area
 
 Выходной формат CSV:
-    X_center;Y_center;U_avg;V_avg;count
+    X_center;Y_center;dx_avg;dy_avg;L_avg;count
     где:
     - X_center, Y_center - координаты центра ячейки
-    - U_avg, V_avg - усреднённые значения компонент скорости
+    - dx_avg, dy_avg - усреднённые значения компонент смещения
+    - L_avg - усреднённая длина вектора
     - count - количество точек в ячейке
 """
 
@@ -209,7 +208,11 @@ class VectorAverageExecutor:
         else:
             output_dir = input_path.parent
 
-        output_name = f"{input_path.stem}{suffix}.csv"
+        pw = int(self.parameters.plane_width)
+        ph = int(self.parameters.plane_height)
+        cw = int(self.parameters.cell_width)
+        ch = int(self.parameters.cell_height)
+        output_name = f"{input_path.stem}{suffix}_{pw}_{ph}_{cw}_{ch}.csv"
         return output_dir / output_name
 
     def _get_cell_index(self, x: float, y: float) -> Tuple[int, int]:
@@ -314,7 +317,7 @@ class VectorAverageExecutor:
                     )
 
                 # Проверка обязательных столбцов
-                required_columns = [self.parameters.x_column, self.parameters.y_column, 'U', 'V']
+                required_columns = [self.parameters.x_column, self.parameters.y_column, 'dx', 'dy', 'L']
                 for col in required_columns:
                     if col not in fieldnames:
                         errors.append(f"Отсутствует обязательный столбец: {col}")
@@ -336,7 +339,7 @@ class VectorAverageExecutor:
                 input_vectors = len(rows)
 
             # Словарь для накопления данных по ячейкам
-            # Ключ: (ix, iy), Значение: {'u_sum': float, 'v_sum': float, 'count': int}
+            # Ключ: (ix, iy), Значение: {'dx_sum': float, 'dy_sum': float, 'l_sum': float, 'count': int}
             cells: Dict[Tuple[int, int], Dict[str, float]] = {}
 
             # Распределение точек по ячейкам
@@ -347,8 +350,9 @@ class VectorAverageExecutor:
                 try:
                     x = float(row[x_col].replace(',', '.'))
                     y = float(row[y_col].replace(',', '.'))
-                    u = float(row['U'].replace(',', '.'))
-                    v = float(row['V'].replace(',', '.'))
+                    dx = float(row['dx'].replace(',', '.'))
+                    dy = float(row['dy'].replace(',', '.'))
+                    l = float(row['L'].replace(',', '.'))
 
                     # Проверка, что точка внутри плоскости
                     x_rel = x - self.parameters.origin_x
@@ -367,10 +371,11 @@ class VectorAverageExecutor:
 
                     key = (ix, iy)
                     if key not in cells:
-                        cells[key] = {'u_sum': 0.0, 'v_sum': 0.0, 'count': 0}
+                        cells[key] = {'dx_sum': 0.0, 'dy_sum': 0.0, 'l_sum': 0.0, 'count': 0}
 
-                    cells[key]['u_sum'] += u
-                    cells[key]['v_sum'] += v
+                    cells[key]['dx_sum'] += dx
+                    cells[key]['dy_sum'] += dy
+                    cells[key]['l_sum'] += l
                     cells[key]['count'] += 1
 
                 except (ValueError, KeyError) as e:
@@ -385,14 +390,16 @@ class VectorAverageExecutor:
                 count = data['count']
                 if count >= self.parameters.min_points_in_cell:
                     x_center, y_center = self._get_cell_center(ix, iy)
-                    u_avg = data['u_sum'] / count
-                    v_avg = data['v_sum'] / count
+                    dx_avg = data['dx_sum'] / count
+                    dy_avg = data['dy_sum'] / count
+                    l_avg = np.sqrt(dx_avg ** 2 + dy_avg ** 2)
 
                     output_rows.append({
                         'X_center': f"{x_center:.6f}",
                         'Y_center': f"{y_center:.6f}",
-                        'U_avg': f"{u_avg:.6f}",
-                        'V_avg': f"{v_avg:.6f}",
+                        'dx_avg': f"{dx_avg:.6f}",
+                        'dy_avg': f"{dy_avg:.6f}",
+                        'L_avg': f"{l_avg:.6f}",
                         'count': count
                     })
                     point_counts.append(count)
@@ -414,7 +421,7 @@ class VectorAverageExecutor:
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             with open(output_path, 'w', encoding='utf-8', newline='') as f:
-                fieldnames = ['X_center', 'Y_center', 'U_avg', 'V_avg', 'count']
+                fieldnames = ['X_center', 'Y_center', 'dx_avg', 'dy_avg', 'L_avg', 'count']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
                 writer.writeheader()
                 writer.writerows(output_rows)
@@ -614,11 +621,11 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = VectorAverageParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000\cam_1\cam_1_lucas_kanade_sum_filtered.csv",
-        plane_width=1920.0,  # Ширина изображения
-        plane_height=1080.0,  # Высота изображения
-        cell_width=64.0,  # Размер ячейки 64x64
-        cell_height=64.0,
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_2500\cam_2_pairs_sum_filtered.csv",
+        plane_width=4904,  # Ширина изображения
+        plane_height=3280,  # Высота изображения
+        cell_width=66.0,  # Размер ячейки 64x64
+        cell_height=66.0,
         origin_x=0.0,
         origin_y=0.0,
         min_points_in_cell=3,  # Минимум 3 точки для усреднения

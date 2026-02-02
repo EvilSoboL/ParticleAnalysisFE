@@ -5,9 +5,9 @@
 с усреднёнными векторами.
 
 Входной формат CSV (разделитель ;):
-    X_center;Y_center;U_avg;V_avg;count
-    или:
-    X_center;Y_center;U_avg;V_avg
+    X_center;Y_center;dx_avg;dy_avg;L_avg;count
+    или исходный:
+    X0;Y0;dx;dy;L;Diameter;Area
 """
 
 import sys
@@ -35,12 +35,12 @@ class VectorPlotResult:
     success: bool
     vectors_count: int  # Количество отрисованных векторов
     output_file: str  # Путь к сохранённому изображению
-    u_min: float
-    u_max: float
-    v_min: float
-    v_max: float
-    magnitude_min: float
-    magnitude_max: float
+    dx_min: float
+    dx_max: float
+    dy_min: float
+    dy_max: float
+    l_min: float
+    l_max: float
     errors: List[str]
 
 
@@ -71,7 +71,7 @@ class VectorPlotParameters:
 
     # ПАРАМЕТРЫ ЦВЕТА
     colormap: str = "jet"  # Цветовая карта (jet, viridis, plasma, coolwarm, etc.)
-    color_by: str = "magnitude"  # По чему красить: magnitude, u, v, angle
+    color_by: str = "L"  # По чему красить: L, dx, dy, angle
     show_colorbar: bool = True  # Показывать colorbar
 
     # ПАРАМЕТРЫ ОСЕЙ
@@ -80,7 +80,7 @@ class VectorPlotParameters:
     ylabel: str = "Y"  # Подпись оси Y
     invert_y: bool = True  # Инвертировать ось Y (для изображений)
     equal_aspect: bool = True  # Равный масштаб осей
-    grid: bool = False  # Показывать сетку
+    grid: bool = True  # Показывать сетку
 
     # ПАРАМЕТРЫ ФОНА
     background_image: Optional[str] = None  # Путь к фоновому изображению
@@ -94,8 +94,9 @@ class VectorPlotParameters:
     # КОЛОНКИ CSV
     x_column: str = "X_center"
     y_column: str = "Y_center"
-    u_column: str = "U_avg"
-    v_column: str = "V_avg"
+    dx_column: str = "dx_avg"
+    dy_column: str = "dy_avg"
+    l_column: str = "L_avg"
 
     def validate(self) -> Tuple[bool, str]:
         """
@@ -136,7 +137,7 @@ class VectorPlotParameters:
             return False, f"Неизвестная цветовая карта: {self.colormap}"
 
         # Проверка color_by
-        valid_color_by = ['magnitude', 'u', 'v', 'angle']
+        valid_color_by = ['L', 'dx', 'dy', 'angle']
         if self.color_by not in valid_color_by:
             return False, f"Недопустимое значение color_by: {self.color_by}. Допустимые: {valid_color_by}"
 
@@ -215,20 +216,21 @@ class VectorPlotExecutor:
         output_name = f"{input_path.stem}{suffix}.{fmt}"
         return output_dir / output_name
 
-    def _read_csv(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
+    def _read_csv(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
         """
         Чтение CSV файла.
 
         Returns:
-            Tuple[X, Y, U, V, errors]
+            Tuple[X, Y, DX, DY, L, errors]
         """
         input_path = Path(self.parameters.input_file)
         errors = []
 
         x_list = []
         y_list = []
-        u_list = []
-        v_list = []
+        dx_list = []
+        dy_list = []
+        l_list = []
 
         try:
             with open(input_path, 'r', encoding='utf-8') as f:
@@ -237,27 +239,30 @@ class VectorPlotExecutor:
 
                 if fieldnames is None:
                     errors.append("Не удалось прочитать заголовки файла")
-                    return np.array([]), np.array([]), np.array([]), np.array([]), errors
+                    return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), errors
 
                 # Проверка обязательных столбцов
                 required = [self.parameters.x_column, self.parameters.y_column,
-                           self.parameters.u_column, self.parameters.v_column]
+                           self.parameters.dx_column, self.parameters.dy_column,
+                           self.parameters.l_column]
                 for col in required:
                     if col not in fieldnames:
                         errors.append(f"Отсутствует столбец: {col}")
-                        return np.array([]), np.array([]), np.array([]), np.array([]), errors
+                        return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), errors
 
                 for row in reader:
                     try:
                         x = float(row[self.parameters.x_column].replace(',', '.'))
                         y = float(row[self.parameters.y_column].replace(',', '.'))
-                        u = float(row[self.parameters.u_column].replace(',', '.'))
-                        v = float(row[self.parameters.v_column].replace(',', '.'))
+                        dx = float(row[self.parameters.dx_column].replace(',', '.'))
+                        dy = float(row[self.parameters.dy_column].replace(',', '.'))
+                        l = float(row[self.parameters.l_column].replace(',', '.'))
 
                         x_list.append(x)
                         y_list.append(y)
-                        u_list.append(u)
-                        v_list.append(v)
+                        dx_list.append(dx)
+                        dy_list.append(dy)
+                        l_list.append(l)
 
                     except (ValueError, KeyError) as e:
                         logger.warning(f"Ошибка парсинга строки: {e}")
@@ -266,7 +271,7 @@ class VectorPlotExecutor:
         except Exception as e:
             errors.append(str(e))
 
-        return np.array(x_list), np.array(y_list), np.array(u_list), np.array(v_list), errors
+        return np.array(x_list), np.array(y_list), np.array(dx_list), np.array(dy_list), np.array(l_list), errors
 
     def execute(self) -> VectorPlotResult:
         """
@@ -281,9 +286,9 @@ class VectorPlotExecutor:
                 success=False,
                 vectors_count=0,
                 output_file="",
-                u_min=0, u_max=0,
-                v_min=0, v_max=0,
-                magnitude_min=0, magnitude_max=0,
+                dx_min=0, dx_max=0,
+                dy_min=0, dy_max=0,
+                l_min=0, l_max=0,
                 errors=["Параметры не установлены"]
             )
 
@@ -296,16 +301,16 @@ class VectorPlotExecutor:
         logger.info("=" * 60)
 
         # Чтение данных
-        X, Y, U, V, errors = self._read_csv()
+        X, Y, DX, DY, L, errors = self._read_csv()
 
         if errors:
             return VectorPlotResult(
                 success=False,
                 vectors_count=0,
                 output_file="",
-                u_min=0, u_max=0,
-                v_min=0, v_max=0,
-                magnitude_min=0, magnitude_max=0,
+                dx_min=0, dx_max=0,
+                dy_min=0, dy_max=0,
+                l_min=0, l_max=0,
                 errors=errors
             )
 
@@ -314,26 +319,25 @@ class VectorPlotExecutor:
                 success=False,
                 vectors_count=0,
                 output_file="",
-                u_min=0, u_max=0,
-                v_min=0, v_max=0,
-                magnitude_min=0, magnitude_max=0,
+                dx_min=0, dx_max=0,
+                dy_min=0, dy_max=0,
+                l_min=0, l_max=0,
                 errors=["Нет данных для отображения"]
             )
 
-        # Вычисление магнитуды и угла
-        magnitude = np.sqrt(U**2 + V**2)
-        angle = np.arctan2(V, U)
+        # Вычисление угла
+        angle = np.arctan2(DY, DX)
 
         # Определение цвета
-        if self.parameters.color_by == 'magnitude':
-            colors = magnitude
-            colorbar_label = 'Magnitude'
-        elif self.parameters.color_by == 'u':
-            colors = U
-            colorbar_label = 'U'
-        elif self.parameters.color_by == 'v':
-            colors = V
-            colorbar_label = 'V'
+        if self.parameters.color_by == 'L':
+            colors = L
+            colorbar_label = 'L'
+        elif self.parameters.color_by == 'dx':
+            colors = DX
+            colorbar_label = 'dx'
+        elif self.parameters.color_by == 'dy':
+            colors = DY
+            colorbar_label = 'dy'
         else:  # angle
             colors = np.degrees(angle)
             colorbar_label = 'Angle (degrees)'
@@ -353,13 +357,13 @@ class VectorPlotExecutor:
                 logger.warning(f"Не удалось загрузить фоновое изображение: {e}")
 
         # Построение quiver
-        # scale: чем меньше значение, тем длиннее стрелки
-        # arrow_scale=1.0 даёт базовый размер, >1 увеличивает, <1 уменьшает
+        # scale: чем больше значение, тем короче стрелки
+        # arrow_scale=1.0 даёт базовый размер, >1 уменьшает, <1 увеличивает
         quiver = ax.quiver(
-            X, Y, U, V,
+            X, Y, DX, DY,
             colors,
             cmap=self.parameters.colormap,
-            scale=1.0 / self.parameters.arrow_scale,
+            scale=10.0 * self.parameters.arrow_scale,
             width=self.parameters.arrow_width,
             headwidth=self.parameters.arrow_headwidth,
             headlength=self.parameters.arrow_headlength
@@ -391,9 +395,9 @@ class VectorPlotExecutor:
         logger.info("=" * 60)
         logger.info("ГРАФИК ПОСТРОЕН")
         logger.info(f"Векторов: {len(X)}")
-        logger.info(f"U: [{U.min():.3f}, {U.max():.3f}]")
-        logger.info(f"V: [{V.min():.3f}, {V.max():.3f}]")
-        logger.info(f"Magnitude: [{magnitude.min():.3f}, {magnitude.max():.3f}]")
+        logger.info(f"dx: [{DX.min():.3f}, {DX.max():.3f}]")
+        logger.info(f"dy: [{DY.min():.3f}, {DY.max():.3f}]")
+        logger.info(f"L: [{L.min():.3f}, {L.max():.3f}]")
         logger.info(f"Выходной файл: {output_path}")
         logger.info("=" * 60)
 
@@ -401,12 +405,12 @@ class VectorPlotExecutor:
             success=True,
             vectors_count=len(X),
             output_file=str(output_path),
-            u_min=float(U.min()),
-            u_max=float(U.max()),
-            v_min=float(V.min()),
-            v_max=float(V.max()),
-            magnitude_min=float(magnitude.min()),
-            magnitude_max=float(magnitude.max()),
+            dx_min=float(DX.min()),
+            dx_max=float(DX.max()),
+            dy_min=float(DY.min()),
+            dy_max=float(DY.max()),
+            l_min=float(L.min()),
+            l_max=float(L.max()),
             errors=[]
         )
 
@@ -421,24 +425,23 @@ class VectorPlotExecutor:
             return None
 
         # Чтение данных
-        X, Y, U, V, errors = self._read_csv()
+        X, Y, DX, DY, L, errors = self._read_csv()
 
         if errors or len(X) == 0:
             return None
 
-        magnitude = np.sqrt(U**2 + V**2)
-        angle = np.arctan2(V, U)
+        angle = np.arctan2(DY, DX)
 
         # Определение цвета
-        if self.parameters.color_by == 'magnitude':
-            colors = magnitude
-            colorbar_label = 'Magnitude'
-        elif self.parameters.color_by == 'u':
-            colors = U
-            colorbar_label = 'U'
-        elif self.parameters.color_by == 'v':
-            colors = V
-            colorbar_label = 'V'
+        if self.parameters.color_by == 'L':
+            colors = L
+            colorbar_label = 'L'
+        elif self.parameters.color_by == 'dx':
+            colors = DX
+            colorbar_label = 'dx'
+        elif self.parameters.color_by == 'dy':
+            colors = DY
+            colorbar_label = 'dy'
         else:
             colors = np.degrees(angle)
             colorbar_label = 'Angle (degrees)'
@@ -455,10 +458,10 @@ class VectorPlotExecutor:
                 logger.warning(f"Не удалось загрузить фоновое изображение: {e}")
 
         quiver = ax.quiver(
-            X, Y, U, V,
+            X, Y, DX, DY,
             colors,
             cmap=self.parameters.colormap,
-            scale=1.0 / self.parameters.arrow_scale,
+            scale=10.0 * self.parameters.arrow_scale,
             width=self.parameters.arrow_width,
             headwidth=self.parameters.arrow_headwidth,
             headlength=self.parameters.arrow_headlength
@@ -493,24 +496,22 @@ class VectorPlotExecutor:
         if self.parameters is None:
             return None
 
-        X, Y, U, V, errors = self._read_csv()
+        X, Y, DX, DY, L, errors = self._read_csv()
 
         if errors or len(X) == 0:
             return None
-
-        magnitude = np.sqrt(U**2 + V**2)
 
         return {
             'file': Path(self.parameters.input_file).name,
             'vectors_count': len(X),
             'x_range': (float(X.min()), float(X.max())),
             'y_range': (float(Y.min()), float(Y.max())),
-            'u_range': (float(U.min()), float(U.max())),
-            'v_range': (float(V.min()), float(V.max())),
-            'magnitude_range': (float(magnitude.min()), float(magnitude.max())),
-            'u_mean': float(U.mean()),
-            'v_mean': float(V.mean()),
-            'magnitude_mean': float(magnitude.mean())
+            'dx_range': (float(DX.min()), float(DX.max())),
+            'dy_range': (float(DY.min()), float(DY.max())),
+            'l_range': (float(L.min()), float(L.max())),
+            'dx_mean': float(DX.mean()),
+            'dy_mean': float(DY.mean()),
+            'l_mean': float(L.mean())
         }
 
 
@@ -524,7 +525,7 @@ def run_vector_plot(
     dpi: int = 150,
     arrow_scale: float = 1.0,
     colormap: str = "jet",
-    color_by: str = "magnitude",
+    color_by: str = "L",
     title: str = "Vector Field",
     invert_y: bool = True,
     background_image: Optional[str] = None
@@ -542,7 +543,7 @@ def run_vector_plot(
         dpi: Разрешение
         arrow_scale: Масштаб стрелок
         colormap: Цветовая карта
-        color_by: По чему красить (magnitude, u, v, angle)
+        color_by: По чему красить (L, dx, dy, angle)
         title: Заголовок графика
         invert_y: Инвертировать ось Y
         background_image: Путь к фоновому изображению
@@ -583,9 +584,9 @@ def run_vector_plot(
             success=False,
             vectors_count=0,
             output_file="",
-            u_min=0, u_max=0,
-            v_min=0, v_max=0,
-            magnitude_min=0, magnitude_max=0,
+            dx_min=0, dx_max=0,
+            dy_min=0, dy_max=0,
+            l_min=0, l_max=0,
             errors=[error_msg]
         )
 
@@ -602,13 +603,13 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров ===
     parameters = VectorPlotParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\LucasKanade_2000\cam_1\cam_1_lucas_kanade_sum_filtered_averaged.csv",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_2500\cam_2_pairs_sum_filtered_averaged_4904_3280_66_66.csv",
         figure_width=16.0,
         figure_height=12.0,
         dpi=150,
-        arrow_scale=1.0,
+        arrow_scale=50,
         colormap="jet",
-        color_by="magnitude",
+        color_by="L",
         title="Vector Field",
         xlabel="X (pixels)",
         ylabel="Y (pixels)",
@@ -649,9 +650,9 @@ def example_gui_usage():
         print(f"  Векторов: {preview['vectors_count']}")
         print(f"  X: [{preview['x_range'][0]:.1f}, {preview['x_range'][1]:.1f}]")
         print(f"  Y: [{preview['y_range'][0]:.1f}, {preview['y_range'][1]:.1f}]")
-        print(f"  U: [{preview['u_range'][0]:.3f}, {preview['u_range'][1]:.3f}]")
-        print(f"  V: [{preview['v_range'][0]:.3f}, {preview['v_range'][1]:.3f}]")
-        print(f"  Magnitude: [{preview['magnitude_range'][0]:.3f}, {preview['magnitude_range'][1]:.3f}]")
+        print(f"  dx: [{preview['dx_range'][0]:.3f}, {preview['dx_range'][1]:.3f}]")
+        print(f"  dy: [{preview['dy_range'][0]:.3f}, {preview['dy_range'][1]:.3f}]")
+        print(f"  L: [{preview['l_range'][0]:.3f}, {preview['l_range'][1]:.3f}]")
 
     # === ШАГ 5: Построение графика ===
     print("\nПостроение графика...")
@@ -663,9 +664,9 @@ def example_gui_usage():
     print("=" * 60)
     print(f"Успешно: {result.success}")
     print(f"Векторов: {result.vectors_count}")
-    print(f"U: [{result.u_min:.3f}, {result.u_max:.3f}]")
-    print(f"V: [{result.v_min:.3f}, {result.v_max:.3f}]")
-    print(f"Magnitude: [{result.magnitude_min:.3f}, {result.magnitude_max:.3f}]")
+    print(f"dx: [{result.dx_min:.3f}, {result.dx_max:.3f}]")
+    print(f"dy: [{result.dy_min:.3f}, {result.dy_max:.3f}]")
+    print(f"L: [{result.l_min:.3f}, {result.l_max:.3f}]")
     print(f"Выходной файл: {result.output_file}")
 
     if result.errors:

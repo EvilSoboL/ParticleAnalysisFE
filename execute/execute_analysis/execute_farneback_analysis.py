@@ -452,14 +452,14 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = FarnebackAnalysisParameters(
-        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\farneback_filtered_2000",
+        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\small_without_filter",
         # Параметры Farneback
         pyr_scale=0.5,
         levels=4,
-        winsize=10,
+        winsize=9,
         iterations=3,
         poly_n=5,
-        poly_sigma=1.3,
+        poly_sigma=1.5,
         grid_step=30,
         # Физические параметры
         dt=0.002,
