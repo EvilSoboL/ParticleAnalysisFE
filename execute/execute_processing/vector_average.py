@@ -621,7 +621,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = VectorAverageParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_2500\cam_2_pairs_sum_filtered.csv",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\without_filter\PTV_2000\cam_2_pairs_sum_filtered.csv",
         plane_width=4904,  # Ширина изображения
         plane_height=3280,  # Высота изображения
         cell_width=66.0,  # Размер ячейки 64x64

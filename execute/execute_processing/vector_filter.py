@@ -629,13 +629,13 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = VectorFilterParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_2500\cam_2_pairs_sum.csv",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\without_filter\PTV_2000\cam_2_pairs_sum.csv",
         filter_u=True,
         u_min=0,
-        u_max=30,
+        u_max=40,
         filter_v=True,
-        v_min=-5.0,
-        v_max=5.0,
+        v_min=-10.0,
+        v_max=10.0,
         filter_magnitude=False,
         suffix="_filtered"
     )

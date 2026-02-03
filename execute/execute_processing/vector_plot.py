@@ -603,7 +603,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров ===
     parameters = VectorPlotParameters(
-        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\PTV_2500\cam_2_pairs_sum_filtered_averaged_4904_3280_66_66.csv",
+        input_file=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\without_filter\PTV_2000\cam_2_pairs_sum_filtered_averaged_4904_3280_66_66.csv",
         figure_width=16.0,
         figure_height=12.0,
         dpi=150,

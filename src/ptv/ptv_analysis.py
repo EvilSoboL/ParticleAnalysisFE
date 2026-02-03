@@ -170,7 +170,11 @@ class PTVAnalyzer:
         """Обновление пути выходной папки."""
         if self.input_folder is not None:
             threshold = self._extract_threshold_from_folder_name()
-            output_name = f"PTV_{threshold}"
+            min_area = self.detection_config.min_area
+            max_area = self.detection_config.max_area
+            max_distance = self.matching_config.max_distance
+            diameter_diff = self.matching_config.max_diameter_diff
+            output_name = f"PTV_{threshold}_{min_area}_{max_area}_{max_distance}_{diameter_diff}"
             # Выходная папка создается рядом с входной
             self.output_folder = self.input_folder.parent / output_name
             logger.info(f"Выходная папка: {self.output_folder}")

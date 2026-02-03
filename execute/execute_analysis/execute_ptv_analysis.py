@@ -409,8 +409,8 @@ def example_gui_usage():
         input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit_cam_sorted\without_filter\binary_filter_2000",
         detection_min_area=4,
         detection_max_area=150,
-        matching_max_distance=30.0,
-        matching_max_diameter_diff=2.0,
+        matching_max_distance=50.0,
+        matching_max_diameter_diff=4.0,
         enable_progress_callback=True
     )
 
