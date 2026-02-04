@@ -4,7 +4,7 @@ GUI приложение ParticleAnalysis на PyQt5.
 Три вкладки:
 1. Sort + Binarize — сортировка и бинаризация
 2. PTV Analysis — PTV анализ
-3. Visualization — визуализация векторного поля и one-to-one
+3. PTV Processing — обработка результатов PTV (фильтрация, усреднение, визуализация)
 """
 
 import sys
@@ -29,11 +29,14 @@ from execute.execute_filter.execute_sort_binarize import (
 from execute.execute_analysis.execute_ptv_analysis import (
     PTVExecutor, PTVParameters
 )
-from execute.execute_analysis.execute_ptv_vector_field import (
-    VectorFieldExecutor, VectorFieldParameters
+from execute.execute_processing.vector_filter import (
+    VectorFilterExecutor, VectorFilterParameters
 )
-from execute.execute_analysis.execute_ptv_one_to_one import (
-    VisualizationExecutor, VisualizationParameters
+from execute.execute_processing.vector_average import (
+    VectorAverageExecutor, VectorAverageParameters
+)
+from execute.execute_processing.vector_plot import (
+    VectorPlotExecutor, VectorPlotParameters
 )
 
 
@@ -79,6 +82,27 @@ def _folder_row(label_text: str, parent: QWidget):
         folder = QFileDialog.getExistingDirectory(parent, label_text)
         if folder:
             line.setText(folder)
+
+    btn.clicked.connect(_browse)
+    layout.addWidget(label)
+    layout.addWidget(line)
+    layout.addWidget(btn)
+    return layout, line
+
+
+def _file_row(label_text: str, parent: QWidget, filter_str: str = "CSV files (*.csv)"):
+    """Строка ввода файла с кнопкой Browse."""
+    layout = QHBoxLayout()
+    label = QLabel(label_text)
+    label.setFixedWidth(110)
+    line = QLineEdit()
+    btn = QPushButton("Browse...")
+    btn.setFixedWidth(80)
+
+    def _browse():
+        file_path, _ = QFileDialog.getOpenFileName(parent, label_text, "", filter_str)
+        if file_path:
+            line.setText(file_path)
 
     btn.clicked.connect(_browse)
     layout.addWidget(label)
@@ -371,9 +395,9 @@ class PTVAnalysisTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Tab 3: Visualization
+# Tab 3: PTV Processing (фильтрация, усреднение, визуализация)
 # ---------------------------------------------------------------------------
-class VisualizationTab(QWidget):
+class PTVProcessingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
@@ -383,76 +407,143 @@ class VisualizationTab(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        # --- 3a. Vector Field ---
-        vf_group = QGroupBox("Vector Field")
-        vf_layout = QVBoxLayout(vf_group)
+        # --- 3a. Vector Filter ---
+        filt_group = QGroupBox("1. Vector Filter")
+        filt_layout = QVBoxLayout(filt_group)
 
-        folder_layout, self.vf_ptv_line = _folder_row("PTV folder:", self)
-        vf_layout.addLayout(folder_layout)
+        f_row, self.filt_file_line = _file_row("Input CSV:", self)
+        filt_layout.addLayout(f_row)
 
-        # Grid params
-        h1 = QHBoxLayout()
-        h1.addWidget(QLabel("nx:"))
-        self.nx_spin = QSpinBox()
-        self.nx_spin.setRange(10, 200)
-        self.nx_spin.setValue(73)
-        h1.addWidget(self.nx_spin)
-        h1.addWidget(QLabel("ny:"))
-        self.ny_spin = QSpinBox()
-        self.ny_spin.setRange(10, 200)
-        self.ny_spin.setValue(50)
-        h1.addWidget(self.ny_spin)
-        h1.addWidget(QLabel("scale:"))
-        self.scale_spin = QDoubleSpinBox()
-        self.scale_spin.setRange(1.0, 200.0)
-        self.scale_spin.setValue(20.0)
-        h1.addWidget(self.scale_spin)
-        h1.addWidget(QLabel("width:"))
-        self.width_spin = QDoubleSpinBox()
-        self.width_spin.setRange(0.001, 0.02)
-        self.width_spin.setValue(0.005)
-        self.width_spin.setSingleStep(0.001)
-        self.width_spin.setDecimals(3)
-        h1.addWidget(self.width_spin)
-        h1.addStretch()
-        vf_layout.addLayout(h1)
+        # U range
+        h_u = QHBoxLayout()
+        self.filter_u_cb = QCheckBox("Filter U")
+        self.filter_u_cb.setChecked(True)
+        h_u.addWidget(self.filter_u_cb)
+        h_u.addWidget(QLabel("min:"))
+        self.u_min_spin = QDoubleSpinBox()
+        self.u_min_spin.setRange(-10000.0, 10000.0)
+        self.u_min_spin.setValue(-100.0)
+        h_u.addWidget(self.u_min_spin)
+        h_u.addWidget(QLabel("max:"))
+        self.u_max_spin = QDoubleSpinBox()
+        self.u_max_spin.setRange(-10000.0, 10000.0)
+        self.u_max_spin.setValue(100.0)
+        h_u.addWidget(self.u_max_spin)
+        h_u.addStretch()
+        filt_layout.addLayout(h_u)
 
-        h_cmap = QHBoxLayout()
-        h_cmap.addWidget(QLabel("cmap:"))
-        self.cmap_combo = QComboBox()
-        self.cmap_combo.addItems([
+        # V range
+        h_v = QHBoxLayout()
+        self.filter_v_cb = QCheckBox("Filter V")
+        self.filter_v_cb.setChecked(True)
+        h_v.addWidget(self.filter_v_cb)
+        h_v.addWidget(QLabel("min:"))
+        self.v_min_spin = QDoubleSpinBox()
+        self.v_min_spin.setRange(-10000.0, 10000.0)
+        self.v_min_spin.setValue(-100.0)
+        h_v.addWidget(self.v_min_spin)
+        h_v.addWidget(QLabel("max:"))
+        self.v_max_spin = QDoubleSpinBox()
+        self.v_max_spin.setRange(-10000.0, 10000.0)
+        self.v_max_spin.setValue(100.0)
+        h_v.addWidget(self.v_max_spin)
+        h_v.addStretch()
+        filt_layout.addLayout(h_v)
+
+        self.filt_run_btn = QPushButton("Run Filter")
+        filt_layout.addWidget(self.filt_run_btn)
+        layout.addWidget(filt_group)
+
+        # --- 3b. Vector Average ---
+        avg_group = QGroupBox("2. Vector Average")
+        avg_layout = QVBoxLayout(avg_group)
+
+        a_row, self.avg_file_line = _file_row("Input CSV:", self)
+        avg_layout.addLayout(a_row)
+
+        h_plane = QHBoxLayout()
+        h_plane.addWidget(QLabel("plane_width:"))
+        self.plane_w_spin = QDoubleSpinBox()
+        self.plane_w_spin.setRange(1.0, 100000.0)
+        self.plane_w_spin.setValue(4904.0)
+        self.plane_w_spin.setDecimals(1)
+        h_plane.addWidget(self.plane_w_spin)
+        h_plane.addWidget(QLabel("plane_height:"))
+        self.plane_h_spin = QDoubleSpinBox()
+        self.plane_h_spin.setRange(1.0, 100000.0)
+        self.plane_h_spin.setValue(3280.0)
+        self.plane_h_spin.setDecimals(1)
+        h_plane.addWidget(self.plane_h_spin)
+        h_plane.addStretch()
+        avg_layout.addLayout(h_plane)
+
+        h_cell = QHBoxLayout()
+        h_cell.addWidget(QLabel("cell_width:"))
+        self.cell_w_spin = QDoubleSpinBox()
+        self.cell_w_spin.setRange(1.0, 10000.0)
+        self.cell_w_spin.setValue(66.0)
+        self.cell_w_spin.setDecimals(1)
+        h_cell.addWidget(self.cell_w_spin)
+        h_cell.addWidget(QLabel("cell_height:"))
+        self.cell_h_spin = QDoubleSpinBox()
+        self.cell_h_spin.setRange(1.0, 10000.0)
+        self.cell_h_spin.setValue(66.0)
+        self.cell_h_spin.setDecimals(1)
+        h_cell.addWidget(self.cell_h_spin)
+        h_cell.addWidget(QLabel("min_points:"))
+        self.min_pts_spin = QSpinBox()
+        self.min_pts_spin.setRange(1, 1000)
+        self.min_pts_spin.setValue(1)
+        h_cell.addWidget(self.min_pts_spin)
+        h_cell.addStretch()
+        avg_layout.addLayout(h_cell)
+
+        self.avg_run_btn = QPushButton("Run Average")
+        avg_layout.addWidget(self.avg_run_btn)
+        layout.addWidget(avg_group)
+
+        # --- 3c. Vector Plot ---
+        plot_group = QGroupBox("3. Vector Plot")
+        plot_layout = QVBoxLayout(plot_group)
+
+        p_row, self.plot_file_line = _file_row("Input CSV:", self)
+        plot_layout.addLayout(p_row)
+
+        h_plot1 = QHBoxLayout()
+        h_plot1.addWidget(QLabel("arrow_scale:"))
+        self.arrow_scale_spin = QDoubleSpinBox()
+        self.arrow_scale_spin.setRange(0.01, 1000.0)
+        self.arrow_scale_spin.setValue(1.0)
+        self.arrow_scale_spin.setDecimals(2)
+        h_plot1.addWidget(self.arrow_scale_spin)
+        h_plot1.addWidget(QLabel("arrow_width:"))
+        self.arrow_width_spin = QDoubleSpinBox()
+        self.arrow_width_spin.setRange(0.001, 0.05)
+        self.arrow_width_spin.setValue(0.003)
+        self.arrow_width_spin.setSingleStep(0.001)
+        self.arrow_width_spin.setDecimals(3)
+        h_plot1.addWidget(self.arrow_width_spin)
+        h_plot1.addStretch()
+        plot_layout.addLayout(h_plot1)
+
+        h_plot2 = QHBoxLayout()
+        h_plot2.addWidget(QLabel("colormap:"))
+        self.plot_cmap_combo = QComboBox()
+        self.plot_cmap_combo.addItems([
             "jet", "viridis", "plasma", "inferno", "magma", "cividis",
             "coolwarm", "RdYlBu", "Spectral"
         ])
-        h_cmap.addWidget(self.cmap_combo)
-        h_cmap.addStretch()
-        vf_layout.addLayout(h_cmap)
+        h_plot2.addWidget(self.plot_cmap_combo)
+        h_plot2.addWidget(QLabel("color_by:"))
+        self.color_by_combo = QComboBox()
+        self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
+        h_plot2.addWidget(self.color_by_combo)
+        h_plot2.addStretch()
+        plot_layout.addLayout(h_plot2)
 
-        self.vf_run_btn = QPushButton("Run Vector Field")
-        vf_layout.addWidget(self.vf_run_btn)
-        layout.addWidget(vf_group)
-
-        # --- 3b. One-to-One ---
-        oto_group = QGroupBox("One-to-One Visualization")
-        oto_layout = QVBoxLayout(oto_group)
-
-        f1, self.oto_orig_line = _folder_row("Original folder:", self)
-        oto_layout.addLayout(f1)
-        f2, self.oto_ptv_line = _folder_row("PTV folder:", self)
-        oto_layout.addLayout(f2)
-
-        h_lt = QHBoxLayout()
-        h_lt.addWidget(QLabel("line_thickness:"))
-        self.line_thick_spin = QSpinBox()
-        self.line_thick_spin.setRange(1, 5)
-        self.line_thick_spin.setValue(1)
-        h_lt.addWidget(self.line_thick_spin)
-        h_lt.addStretch()
-        oto_layout.addLayout(h_lt)
-
-        self.oto_run_btn = QPushButton("Run One-to-One")
-        oto_layout.addWidget(self.oto_run_btn)
-        layout.addWidget(oto_group)
+        self.plot_run_btn = QPushButton("Run Plot")
+        plot_layout.addWidget(self.plot_run_btn)
+        layout.addWidget(plot_group)
 
         # Shared progress + log
         self.progress_bar = QProgressBar()
@@ -465,66 +556,106 @@ class VisualizationTab(QWidget):
         layout.addWidget(self.log_text)
 
         # Connections
-        self.vf_run_btn.clicked.connect(self._run_vector_field)
-        self.oto_run_btn.clicked.connect(self._run_one_to_one)
+        self.filt_run_btn.clicked.connect(self._run_filter)
+        self.avg_run_btn.clicked.connect(self._run_average)
+        self.plot_run_btn.clicked.connect(self._run_plot)
 
-    def _run_vector_field(self):
-        folder = self.vf_ptv_line.text().strip()
-        if not folder:
-            QMessageBox.warning(self, "Warning", "Select PTV folder.")
+    # ---- Run Filter ----
+    def _run_filter(self):
+        csv_path = self.filt_file_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Warning", "Select input CSV file.")
             return
 
-        params = VectorFieldParameters(
-            ptv_folder=folder,
-            nx=self.nx_spin.value(),
-            ny=self.ny_spin.value(),
-            scale=self.scale_spin.value(),
-            width=self.width_spin.value(),
-            cmap=self.cmap_combo.currentText(),
+        params = VectorFilterParameters(
+            input_file=csv_path,
+            filter_u=self.filter_u_cb.isChecked(),
+            u_min=self.u_min_spin.value(),
+            u_max=self.u_max_spin.value(),
+            filter_v=self.filter_v_cb.isChecked(),
+            v_min=self.v_min_spin.value(),
+            v_max=self.v_max_spin.value(),
         )
 
-        self._executor = VectorFieldExecutor()
+        self._executor = VectorFilterExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
             QMessageBox.critical(self, "Error", msg)
             return
 
         self.log_text.clear()
-        self._log(f"Starting Vector Field...")
-        self._log(f"  PTV folder: {folder}")
-        self._log(f"  nx: {self.nx_spin.value()}, ny: {self.ny_spin.value()}")
-        self._log(f"  scale: {self.scale_spin.value()}, width: {self.width_spin.value()}")
-        self._log(f"  cmap: {self.cmap_combo.currentText()}")
+        self._log("Starting Vector Filter...")
+        self._log(f"  Input: {csv_path}")
+        if params.filter_u:
+            self._log(f"  U: [{params.u_min}, {params.u_max}]")
+        if params.filter_v:
+            self._log(f"  V: [{params.v_min}, {params.v_max}]")
         self._log("")
         self._start_worker()
 
-    def _run_one_to_one(self):
-        orig = self.oto_orig_line.text().strip()
-        ptv = self.oto_ptv_line.text().strip()
-        if not orig or not ptv:
-            QMessageBox.warning(self, "Warning", "Select both folders.")
+    # ---- Run Average ----
+    def _run_average(self):
+        csv_path = self.avg_file_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Warning", "Select input CSV file.")
             return
 
-        params = VisualizationParameters(
-            original_folder=orig,
-            ptv_folder=ptv,
-            line_thickness=self.line_thick_spin.value(),
+        params = VectorAverageParameters(
+            input_file=csv_path,
+            plane_width=self.plane_w_spin.value(),
+            plane_height=self.plane_h_spin.value(),
+            cell_width=self.cell_w_spin.value(),
+            cell_height=self.cell_h_spin.value(),
+            min_points_in_cell=self.min_pts_spin.value(),
         )
 
-        self._executor = VisualizationExecutor()
+        self._executor = VectorAverageExecutor()
+        ok, msg = self._executor.set_parameters(params)
+        if not ok:
+            QMessageBox.critical(self, "Error", msg)
+            return
+
+        grid_info = params.get_grid_info()
+        self.log_text.clear()
+        self._log("Starting Vector Average...")
+        self._log(f"  Input: {csv_path}")
+        self._log(f"  Plane: {params.plane_width} x {params.plane_height}")
+        self._log(f"  Cell: {params.cell_width} x {params.cell_height}")
+        self._log(f"  Grid: {grid_info['nx']} x {grid_info['ny']} = {grid_info['total_cells']} cells")
+        self._log(f"  Min points: {params.min_points_in_cell}")
+        self._log("")
+        self._start_worker()
+
+    # ---- Run Plot ----
+    def _run_plot(self):
+        csv_path = self.plot_file_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+            return
+
+        params = VectorPlotParameters(
+            input_file=csv_path,
+            arrow_scale=self.arrow_scale_spin.value(),
+            arrow_width=self.arrow_width_spin.value(),
+            colormap=self.plot_cmap_combo.currentText(),
+            color_by=self.color_by_combo.currentText(),
+        )
+
+        self._executor = VectorPlotExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
             QMessageBox.critical(self, "Error", msg)
             return
 
         self.log_text.clear()
-        self._log(f"Starting One-to-One Visualization...")
-        self._log(f"  Original: {orig}")
-        self._log(f"  PTV folder: {ptv}")
-        self._log(f"  line_thickness: {self.line_thick_spin.value()}")
+        self._log("Starting Vector Plot...")
+        self._log(f"  Input: {csv_path}")
+        self._log(f"  arrow_scale: {params.arrow_scale}, arrow_width: {params.arrow_width}")
+        self._log(f"  colormap: {params.colormap}, color_by: {params.color_by}")
         self._log("")
         self._start_worker()
 
+    # ---- Common ----
     def _start_worker(self):
         self._set_running(True)
         self.progress_bar.setValue(0)
@@ -549,7 +680,32 @@ class VisualizationTab(QWidget):
         self.status_label.setText("Done" if result.success else "Failed")
         self._log("--- Result ---")
         self._log(f"Success: {result.success}")
-        self._log(f"Output: {result.output_folder}")
+
+        # VectorFilterResult
+        if hasattr(result, 'input_vectors') and hasattr(result, 'vectors_removed'):
+            self._log(f"Input vectors: {result.input_vectors}")
+            self._log(f"Output vectors: {result.output_vectors}")
+            self._log(f"Removed: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
+            self._log(f"Output file: {result.output_file}")
+
+        # VectorAverageResult
+        elif hasattr(result, 'output_cells'):
+            self._log(f"Input vectors: {result.input_vectors}")
+            self._log(f"Grid: {result.grid_size[0]} x {result.grid_size[1]}")
+            self._log(f"Non-empty cells: {result.output_cells}")
+            self._log(f"Empty cells: {result.empty_cells}")
+            self._log(f"Points per cell: min={result.min_points_per_cell}, "
+                       f"max={result.max_points_per_cell}, avg={result.avg_points_per_cell:.1f}")
+            self._log(f"Output file: {result.output_file}")
+
+        # VectorPlotResult
+        elif hasattr(result, 'vectors_count'):
+            self._log(f"Vectors plotted: {result.vectors_count}")
+            self._log(f"dx: [{result.dx_min:.3f}, {result.dx_max:.3f}]")
+            self._log(f"dy: [{result.dy_min:.3f}, {result.dy_max:.3f}]")
+            self._log(f"L: [{result.l_min:.3f}, {result.l_max:.3f}]")
+            self._log(f"Output file: {result.output_file}")
+
         if result.errors:
             self._log(f"Errors: {result.errors}")
 
@@ -559,8 +715,9 @@ class VisualizationTab(QWidget):
         self._log(f"ERROR: {msg}")
 
     def _set_running(self, running: bool):
-        self.vf_run_btn.setEnabled(not running)
-        self.oto_run_btn.setEnabled(not running)
+        self.filt_run_btn.setEnabled(not running)
+        self.avg_run_btn.setEnabled(not running)
+        self.plot_run_btn.setEnabled(not running)
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +732,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(SortBinarizeTab(), "Sort + Binarize")
         tabs.addTab(PTVAnalysisTab(), "PTV Analysis")
-        tabs.addTab(VisualizationTab(), "Visualization")
+        tabs.addTab(PTVProcessingTab(), "PTV Processing")
         self.setCentralWidget(tabs)
 
 
