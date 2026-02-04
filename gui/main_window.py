@@ -1,10 +1,11 @@
 """
 GUI приложение ParticleAnalysis на PyQt5.
 
-Три вкладки:
+Четыре вкладки:
 1. Sort + Binarize — сортировка и бинаризация
 2. PTV Analysis — PTV анализ
 3. PTV Processing — обработка результатов PTV (фильтрация, усреднение, визуализация)
+4. Coordinate Transform — перевод координат и скоростей из пикселей в метры/м/с
 """
 
 import sys
@@ -37,6 +38,9 @@ from execute.execute_processing.vector_average import (
 )
 from execute.execute_processing.vector_plot import (
     VectorPlotExecutor, VectorPlotParameters
+)
+from execute.execute_processing.coordinate_transform import (
+    CoordinateTransformExecutor, CoordinateTransformParameters
 )
 
 
@@ -513,7 +517,7 @@ class PTVProcessingTab(QWidget):
         h_plot1.addWidget(QLabel("arrow_scale:"))
         self.arrow_scale_spin = QDoubleSpinBox()
         self.arrow_scale_spin.setRange(0.01, 1000.0)
-        self.arrow_scale_spin.setValue(1.0)
+        self.arrow_scale_spin.setValue(20.0)
         self.arrow_scale_spin.setDecimals(2)
         h_plot1.addWidget(self.arrow_scale_spin)
         h_plot1.addWidget(QLabel("arrow_width:"))
@@ -721,6 +725,155 @@ class PTVProcessingTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Tab 4: Coordinate Transform
+# ---------------------------------------------------------------------------
+class CoordinateTransformTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._worker = None
+        self._executor = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Input CSV
+        f_row, self.input_file_line = _file_row("Input CSV:", self)
+        layout.addLayout(f_row)
+
+        # Origin
+        h_origin = QHBoxLayout()
+        h_origin.addWidget(QLabel("X_origin (px):"))
+        self.x_origin_spin = QDoubleSpinBox()
+        self.x_origin_spin.setRange(0.0, 100000.0)
+        self.x_origin_spin.setValue(0.0)
+        self.x_origin_spin.setDecimals(1)
+        h_origin.addWidget(self.x_origin_spin)
+        h_origin.addWidget(QLabel("Y_origin (px):"))
+        self.y_origin_spin = QDoubleSpinBox()
+        self.y_origin_spin.setRange(0.0, 100000.0)
+        self.y_origin_spin.setValue(0.0)
+        self.y_origin_spin.setDecimals(1)
+        h_origin.addWidget(self.y_origin_spin)
+        h_origin.addStretch()
+        layout.addLayout(h_origin)
+
+        # Scale
+        h_scale = QHBoxLayout()
+        h_scale.addWidget(QLabel("Scale (m/px):"))
+        self.scale_spin = QDoubleSpinBox()
+        self.scale_spin.setRange(0.0000001, 1000.0)
+        self.scale_spin.setValue(0.001)
+        self.scale_spin.setDecimals(7)
+        self.scale_spin.setSingleStep(0.0001)
+        h_scale.addWidget(self.scale_spin)
+        h_scale.addWidget(QLabel("dt (s):"))
+        self.dt_spin = QDoubleSpinBox()
+        self.dt_spin.setRange(0.0000001, 1000.0)
+        self.dt_spin.setValue(0.001)
+        self.dt_spin.setDecimals(7)
+        self.dt_spin.setSingleStep(0.0001)
+        h_scale.addWidget(self.dt_spin)
+        h_scale.addStretch()
+        layout.addLayout(h_scale)
+
+        # Run / Cancel
+        btn_layout = QHBoxLayout()
+        self.run_btn = QPushButton("Run")
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setEnabled(False)
+        btn_layout.addWidget(self.run_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        # Progress
+        self.progress_bar = QProgressBar()
+        self.status_label = QLabel("Ready")
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.status_label)
+
+        # Log
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        layout.addWidget(self.log_text)
+
+        # Connections
+        self.run_btn.clicked.connect(self._run)
+        self.cancel_btn.clicked.connect(self._cancel)
+
+    def _run(self):
+        csv_path = self.input_file_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+            return
+
+        params = CoordinateTransformParameters(
+            input_file=csv_path,
+            x_origin=self.x_origin_spin.value(),
+            y_origin=self.y_origin_spin.value(),
+            scale=self.scale_spin.value(),
+            dt=self.dt_spin.value(),
+        )
+
+        self._executor = CoordinateTransformExecutor()
+        ok, msg = self._executor.set_parameters(params)
+        if not ok:
+            QMessageBox.critical(self, "Error", msg)
+            return
+
+        self._set_running(True)
+        self.log_text.clear()
+        self.progress_bar.setValue(0)
+        self._log("Starting Coordinate Transform...")
+        self._log(f"  Input: {csv_path}")
+        self._log(f"  X_origin: {params.x_origin}, Y_origin: {params.y_origin}")
+        self._log(f"  Scale: {params.scale} m/px")
+        self._log(f"  dt: {params.dt} s")
+        self._log("")
+
+        self._worker = WorkerThread(self._executor, self)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    def _cancel(self):
+        if self._executor and hasattr(self._executor, 'cancel'):
+            self._executor.cancel()
+        self._log("Cancellation requested...")
+
+    def _log(self, text: str):
+        self.log_text.append(text)
+
+    def _on_progress(self, pct, msg):
+        self.progress_bar.setValue(int(pct))
+        self.status_label.setText(msg)
+        self._log(f"[{pct:.1f}%] {msg}")
+
+    def _on_finished(self, result):
+        self._set_running(False)
+        self.progress_bar.setValue(100)
+        self.status_label.setText("Done" if result.success else "Failed")
+        self._log("--- Result ---")
+        self._log(f"Success: {result.success}")
+        self._log(f"Input rows: {result.input_rows}")
+        self._log(f"Output rows: {result.output_rows}")
+        self._log(f"Output file: {result.output_file}")
+        if result.errors:
+            self._log(f"Errors: {result.errors}")
+
+    def _on_error(self, msg):
+        self._set_running(False)
+        self.status_label.setText("Error")
+        self._log(f"ERROR: {msg}")
+
+    def _set_running(self, running: bool):
+        self.run_btn.setEnabled(not running)
+        self.cancel_btn.setEnabled(running)
+
+
+# ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -733,6 +886,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(SortBinarizeTab(), "Sort + Binarize")
         tabs.addTab(PTVAnalysisTab(), "PTV Analysis")
         tabs.addTab(PTVProcessingTab(), "PTV Processing")
+        tabs.addTab(CoordinateTransformTab(), "Coordinate Transform")
         self.setCentralWidget(tabs)
 
 
