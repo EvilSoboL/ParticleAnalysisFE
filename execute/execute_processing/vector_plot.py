@@ -91,6 +91,9 @@ class VectorPlotParameters:
     suffix: str = "_plot"  # Суффикс для выходного файла
     output_format: str = "png"  # Формат: png, jpg, svg, pdf
 
+    # ПОДПИСЬ COLORBAR (None = автоматически по color_by)
+    colorbar_label: Optional[str] = None
+
     # КОЛОНКИ CSV
     x_column: str = "X_center"
     y_column: str = "Y_center"
@@ -341,6 +344,9 @@ class VectorPlotExecutor:
         else:  # angle
             colors = np.degrees(angle)
             colorbar_label = 'Angle (degrees)'
+
+        if self.parameters.colorbar_label is not None:
+            colorbar_label = self.parameters.colorbar_label
 
         # Создание графика
         fig, ax = plt.subplots(figsize=(self.parameters.figure_width, self.parameters.figure_height))

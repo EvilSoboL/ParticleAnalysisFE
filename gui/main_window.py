@@ -732,14 +732,19 @@ class CoordinateTransformTab(QWidget):
         super().__init__(parent)
         self._worker = None
         self._executor = None
+        self._last_output_file = None
         self._init_ui()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
+        # --- 1. Coordinate Transform ---
+        transform_group = QGroupBox("1. Coordinate Transform")
+        transform_layout = QVBoxLayout(transform_group)
+
         # Input CSV
         f_row, self.input_file_line = _file_row("Input CSV:", self)
-        layout.addLayout(f_row)
+        transform_layout.addLayout(f_row)
 
         # Origin
         h_origin = QHBoxLayout()
@@ -756,7 +761,7 @@ class CoordinateTransformTab(QWidget):
         self.y_origin_spin.setDecimals(1)
         h_origin.addWidget(self.y_origin_spin)
         h_origin.addStretch()
-        layout.addLayout(h_origin)
+        transform_layout.addLayout(h_origin)
 
         # Scale
         h_scale = QHBoxLayout()
@@ -775,34 +780,71 @@ class CoordinateTransformTab(QWidget):
         self.dt_spin.setSingleStep(0.0001)
         h_scale.addWidget(self.dt_spin)
         h_scale.addStretch()
-        layout.addLayout(h_scale)
+        transform_layout.addLayout(h_scale)
 
-        # Run / Cancel
-        btn_layout = QHBoxLayout()
-        self.run_btn = QPushButton("Run")
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setEnabled(False)
-        btn_layout.addWidget(self.run_btn)
-        btn_layout.addWidget(self.cancel_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
+        self.transform_run_btn = QPushButton("Run Transform")
+        transform_layout.addWidget(self.transform_run_btn)
+        layout.addWidget(transform_group)
 
-        # Progress
+        # --- 2. Vector Plot (physical units) ---
+        plot_group = QGroupBox("2. Vector Plot (m, m/s)")
+        plot_layout = QVBoxLayout(plot_group)
+
+        p_row, self.plot_file_line = _file_row("Input CSV:", self)
+        plot_layout.addLayout(p_row)
+
+        h_plot1 = QHBoxLayout()
+        h_plot1.addWidget(QLabel("arrow_scale:"))
+        self.arrow_scale_spin = QDoubleSpinBox()
+        self.arrow_scale_spin.setRange(0.01, 1000.0)
+        self.arrow_scale_spin.setValue(20.0)
+        self.arrow_scale_spin.setDecimals(2)
+        h_plot1.addWidget(self.arrow_scale_spin)
+        h_plot1.addWidget(QLabel("arrow_width:"))
+        self.arrow_width_spin = QDoubleSpinBox()
+        self.arrow_width_spin.setRange(0.001, 0.05)
+        self.arrow_width_spin.setValue(0.003)
+        self.arrow_width_spin.setSingleStep(0.001)
+        self.arrow_width_spin.setDecimals(3)
+        h_plot1.addWidget(self.arrow_width_spin)
+        h_plot1.addStretch()
+        plot_layout.addLayout(h_plot1)
+
+        h_plot2 = QHBoxLayout()
+        h_plot2.addWidget(QLabel("colormap:"))
+        self.plot_cmap_combo = QComboBox()
+        self.plot_cmap_combo.addItems([
+            "jet", "viridis", "plasma", "inferno", "magma", "cividis",
+            "coolwarm", "RdYlBu", "Spectral"
+        ])
+        h_plot2.addWidget(self.plot_cmap_combo)
+        h_plot2.addWidget(QLabel("color_by:"))
+        self.color_by_combo = QComboBox()
+        self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
+        h_plot2.addWidget(self.color_by_combo)
+        h_plot2.addStretch()
+        plot_layout.addLayout(h_plot2)
+
+        self.plot_run_btn = QPushButton("Run Plot")
+        plot_layout.addWidget(self.plot_run_btn)
+        layout.addWidget(plot_group)
+
+        # Shared progress + log
         self.progress_bar = QProgressBar()
         self.status_label = QLabel("Ready")
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
 
-        # Log
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         layout.addWidget(self.log_text)
 
         # Connections
-        self.run_btn.clicked.connect(self._run)
-        self.cancel_btn.clicked.connect(self._cancel)
+        self.transform_run_btn.clicked.connect(self._run_transform)
+        self.plot_run_btn.clicked.connect(self._run_plot)
 
-    def _run(self):
+    # ---- Run Transform ----
+    def _run_transform(self):
         csv_path = self.input_file_line.text().strip()
         if not csv_path:
             QMessageBox.warning(self, "Warning", "Select input CSV file.")
@@ -822,26 +864,74 @@ class CoordinateTransformTab(QWidget):
             QMessageBox.critical(self, "Error", msg)
             return
 
-        self._set_running(True)
         self.log_text.clear()
-        self.progress_bar.setValue(0)
         self._log("Starting Coordinate Transform...")
         self._log(f"  Input: {csv_path}")
         self._log(f"  X_origin: {params.x_origin}, Y_origin: {params.y_origin}")
         self._log(f"  Scale: {params.scale} m/px")
         self._log(f"  dt: {params.dt} s")
         self._log("")
+        self._start_worker()
+
+    # ---- Run Plot ----
+    def _run_plot(self):
+        csv_path = self.plot_file_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+            return
+
+        # Map color_by GUI value to transformed column name
+        color_by_gui = self.color_by_combo.currentText()
+        color_by_map = {"L": "L", "dx": "dx", "dy": "dy", "angle": "angle"}
+        l_column_map = {"L": "L_ms", "dx": "dx_ms", "dy": "dy_ms", "angle": "L_ms"}
+        colorbar_labels = {
+            "L": "L (m/s)", "dx": "dx (m/s)", "dy": "dy (m/s)", "angle": "Angle (degrees)"
+        }
+
+        params = VectorPlotParameters(
+            input_file=csv_path,
+            arrow_scale=self.arrow_scale_spin.value(),
+            arrow_width=self.arrow_width_spin.value(),
+            colormap=self.plot_cmap_combo.currentText(),
+            color_by=color_by_map[color_by_gui],
+            colorbar_label=colorbar_labels[color_by_gui],
+            x_column="X_m",
+            y_column="Y_m",
+            dx_column="dx_ms",
+            dy_column="dy_ms",
+            l_column="L_ms",
+            title="Vector Field (physical units)",
+            xlabel="X (m)",
+            ylabel="Y (m)",
+            invert_y=True,
+            suffix="_plot_phys",
+        )
+
+        self._executor = VectorPlotExecutor()
+        ok, msg = self._executor.set_parameters(params)
+        if not ok:
+            QMessageBox.critical(self, "Error", msg)
+            return
+
+        self.log_text.clear()
+        self._log("Starting Vector Plot (physical units)...")
+        self._log(f"  Input: {csv_path}")
+        self._log(f"  arrow_scale: {params.arrow_scale}, arrow_width: {params.arrow_width}")
+        self._log(f"  colormap: {params.colormap}, color_by: {params.color_by}")
+        self._log(f"  axes: X (m), Y (m)")
+        self._log("")
+        self._start_worker()
+
+    # ---- Common ----
+    def _start_worker(self):
+        self._set_running(True)
+        self.progress_bar.setValue(0)
 
         self._worker = WorkerThread(self._executor, self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
         self._worker.start()
-
-    def _cancel(self):
-        if self._executor and hasattr(self._executor, 'cancel'):
-            self._executor.cancel()
-        self._log("Cancellation requested...")
 
     def _log(self, text: str):
         self.log_text.append(text)
@@ -857,9 +947,24 @@ class CoordinateTransformTab(QWidget):
         self.status_label.setText("Done" if result.success else "Failed")
         self._log("--- Result ---")
         self._log(f"Success: {result.success}")
-        self._log(f"Input rows: {result.input_rows}")
-        self._log(f"Output rows: {result.output_rows}")
-        self._log(f"Output file: {result.output_file}")
+
+        # CoordinateTransformResult
+        if hasattr(result, 'input_rows') and hasattr(result, 'output_rows'):
+            self._log(f"Input rows: {result.input_rows}")
+            self._log(f"Output rows: {result.output_rows}")
+            self._log(f"Output file: {result.output_file}")
+            if result.success and result.output_file:
+                self._last_output_file = result.output_file
+                self.plot_file_line.setText(result.output_file)
+
+        # VectorPlotResult
+        elif hasattr(result, 'vectors_count'):
+            self._log(f"Vectors plotted: {result.vectors_count}")
+            self._log(f"dx: [{result.dx_min:.6f}, {result.dx_max:.6f}] m/s")
+            self._log(f"dy: [{result.dy_min:.6f}, {result.dy_max:.6f}] m/s")
+            self._log(f"L: [{result.l_min:.6f}, {result.l_max:.6f}] m/s")
+            self._log(f"Output file: {result.output_file}")
+
         if result.errors:
             self._log(f"Errors: {result.errors}")
 
@@ -869,8 +974,8 @@ class CoordinateTransformTab(QWidget):
         self._log(f"ERROR: {msg}")
 
     def _set_running(self, running: bool):
-        self.run_btn.setEnabled(not running)
-        self.cancel_btn.setEnabled(running)
+        self.transform_run_btn.setEnabled(not running)
+        self.plot_run_btn.setEnabled(not running)
 
 
 # ---------------------------------------------------------------------------
