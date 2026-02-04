@@ -7,12 +7,12 @@
 
 Преобразования:
     1. Относительные координаты: X_rel = X - X_origin, Y_rel = Y - Y_origin
-    2. Перевод в метры: X_m = X_rel * scale, Y_m = Y_rel * scale
+    2. Перевод в мм: X_mm = X_rel * scale * 1000, Y_mm = Y_rel * scale * 1000
     3. Перевод dx/dy/L в м/с: dx_ms = dx * scale / dt, dy_ms = dy * scale / dt, L_ms = L * scale / dt
 
 Выходной формат:
-    Формат 1: X_m;Y_m;dx_ms;dy_ms;L_ms;count
-    Формат 2: X_m;Y_m;dx_ms;dy_ms;L_ms
+    Формат 1: X_mm;Y_mm;dx_ms;dy_ms;L_ms;count
+    Формат 2: X_mm;Y_mm;dx_ms;dy_ms;L_ms
 """
 
 import sys
@@ -172,14 +172,14 @@ class CoordinateTransformExecutor:
                 x_col, y_col = 'X_center', 'Y_center'
                 dx_col, dy_col, l_col = 'dx_avg', 'dy_avg', 'L_avg'
                 has_count = 'count' in fieldnames
-                out_fieldnames = ['X_m', 'Y_m', 'dx_ms', 'dy_ms', 'L_ms']
+                out_fieldnames = ['X_mm', 'Y_mm', 'dx_ms', 'dy_ms', 'L_ms']
                 if has_count:
                     out_fieldnames.append('count')
             else:  # raw
                 x_col, y_col = 'X0', 'Y0'
                 dx_col, dy_col, l_col = 'dx', 'dy', 'L'
                 has_count = False
-                out_fieldnames = ['X_m', 'Y_m', 'dx_ms', 'dy_ms', 'L_ms']
+                out_fieldnames = ['X_mm', 'Y_mm', 'dx_ms', 'dy_ms', 'L_ms']
 
             # Преобразование
             out_rows = []
@@ -187,15 +187,15 @@ class CoordinateTransformExecutor:
                 try:
                     x_rel = float(row[x_col]) - x_origin
                     y_rel = float(row[y_col]) - y_origin
-                    x_m = x_rel * scale
-                    y_m = y_rel * scale
+                    x_mm = x_rel * scale * 1000.0
+                    y_mm = y_rel * scale * 1000.0
                     dx_ms = float(row[dx_col]) * scale / dt
                     dy_ms = float(row[dy_col]) * scale / dt
                     l_ms = float(row[l_col]) * scale / dt
 
                     out_row = {
-                        'X_m': f"{x_m:.6f}",
-                        'Y_m': f"{y_m:.6f}",
+                        'X_mm': f"{x_mm:.4f}",
+                        'Y_mm': f"{y_mm:.4f}",
                         'dx_ms': f"{dx_ms:.6f}",
                         'dy_ms': f"{dy_ms:.6f}",
                         'L_ms': f"{l_ms:.6f}",
