@@ -188,9 +188,12 @@ class VectorFilterExecutor:
 
         return True, ""
 
-    def _get_output_path(self) -> Path:
+    def _get_output_path(self, removal_percentage: float = 0.0) -> Path:
         """
         Получение пути к выходному файлу.
+
+        Args:
+            removal_percentage: процент удалённых векторов (включается в имя файла)
 
         Returns:
             Путь к выходному файлу
@@ -203,7 +206,8 @@ class VectorFilterExecutor:
         else:
             output_folder = input_path.parent
 
-        output_name = f"{input_path.stem}{suffix}{input_path.suffix}"
+        pct = int(round(removal_percentage))
+        output_name = f"{input_path.stem}{suffix}{pct}%{input_path.suffix}"
         return output_folder / output_name
 
     def _detect_columns(self, fieldnames: List[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -328,12 +332,10 @@ class VectorFilterExecutor:
             )
 
         input_path = Path(self.parameters.input_file)
-        output_path = self._get_output_path()
 
         logger.info("=" * 60)
         logger.info("ЗАПУСК ФИЛЬТРАЦИИ ВЕКТОРОВ")
         logger.info(f"Входной файл: {input_path}")
-        logger.info(f"Выходной файл: {output_path}")
         if self.parameters.filter_u:
             logger.info(f"Фильтр U: [{self.parameters.u_min}, {self.parameters.u_max}]")
         if self.parameters.filter_v:
@@ -420,6 +422,8 @@ class VectorFilterExecutor:
             output_vectors = len(filtered_rows)
             vectors_removed = input_vectors - output_vectors
             removal_percentage = (vectors_removed / input_vectors * 100) if input_vectors > 0 else 0.0
+
+            output_path = self._get_output_path(removal_percentage)
 
             # Запись выходного файла
             output_path.parent.mkdir(parents=True, exist_ok=True)
