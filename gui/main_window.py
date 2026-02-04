@@ -643,6 +643,7 @@ class PTVProcessingTab(QWidget):
             arrow_width=self.arrow_width_spin.value(),
             colormap=self.plot_cmap_combo.currentText(),
             color_by=self.color_by_combo.currentText(),
+            invert_y=False,
         )
 
         self._executor = VectorPlotExecutor()
@@ -903,7 +904,7 @@ class CoordinateTransformTab(QWidget):
             title="Vector Field (physical units)",
             xlabel="X (m)",
             ylabel="Y (m)",
-            invert_y=True,
+            invert_y=False,
             suffix="_plot_phys",
         )
 
