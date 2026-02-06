@@ -6,9 +6,15 @@
     Формат 2 (после PTV/фильтрации): X0;Y0;dx;dy;L;Diameter;Area
 
 Преобразования:
-    1. Относительные координаты: X_rel = X - X_origin, Y_rel = Y - Y_origin
-    2. Перевод в мм: X_mm = X_rel * scale * 1000, Y_mm = Y_rel * scale * 1000
-    3. Перевод dx/dy/L в м/с: dx_ms = dx * scale / dt, dy_ms = dy * scale / dt, L_ms = L * scale / dt
+    1. Сдвиг к началу координат: X_rel = X - X_origin, Y_rel = Y - Y_origin
+    2. Поворот против часовой стрелки: X_rot = X_rel * cos(θ) - Y_rel * sin(θ),
+                                       Y_rot = X_rel * sin(θ) + Y_rel * cos(θ)
+    3. Масштабирование в мм: X_mm = X_rot * scale * 1000, Y_mm = Y_rot * scale * 1000
+    4. Поворот векторов скорости: dx_rot = dx * cos(θ) - dy * sin(θ),
+                                  dy_rot = dx * sin(θ) + dy * cos(θ)
+    5. Масштабирование скоростей в м/с: dx_ms = dx_rot * scale / dt,
+                                        dy_ms = dy_rot * scale / dt,
+                                        L_ms = L * scale / dt
 
 Выходной формат:
     Формат 1: X_mm;Y_mm;dx_ms;dy_ms;L_ms;count
@@ -21,6 +27,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 import logging
 import csv
+import math
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -48,6 +55,7 @@ class CoordinateTransformParameters:
     input_file: str
     x_origin: float = 0.0        # Начало координат X (пиксели)
     y_origin: float = 0.0        # Начало координат Y (пиксели)
+    rotation_angle: float = 0.0  # Угол поворота против часовой стрелки (градусы)
     scale: float = 0.001         # Масштаб: метры на пиксель
     dt: float = 0.001            # Временной интервал (секунды)
     output_folder: Optional[str] = None
@@ -96,6 +104,7 @@ class CoordinateTransformExecutor:
         logger.info(f"Параметры установлены:")
         logger.info(f"  Входной файл: {parameters.input_file}")
         logger.info(f"  X_origin: {parameters.x_origin}, Y_origin: {parameters.y_origin}")
+        logger.info(f"  Rotation angle: {parameters.rotation_angle}°")
         logger.info(f"  Scale: {parameters.scale} м/пиксель")
         logger.info(f"  dt: {parameters.dt} с")
         return True, ""
@@ -130,6 +139,12 @@ class CoordinateTransformExecutor:
         dt = self.parameters.dt
         x_origin = self.parameters.x_origin
         y_origin = self.parameters.y_origin
+        rotation_angle = self.parameters.rotation_angle
+
+        # Преобразование угла в радианы и вычисление cos/sin
+        theta_rad = math.radians(rotation_angle)
+        cos_theta = math.cos(theta_rad)
+        sin_theta = math.sin(theta_rad)
 
         logger.info("=" * 60)
         logger.info("ЗАПУСК ПРЕОБРАЗОВАНИЯ КООРДИНАТ")
@@ -185,12 +200,27 @@ class CoordinateTransformExecutor:
             out_rows = []
             for i, row in enumerate(rows):
                 try:
+                    # 1. Сдвиг к началу координат
                     x_rel = float(row[x_col]) - x_origin
                     y_rel = float(row[y_col]) - y_origin
-                    x_mm = x_rel * scale * 1000.0
-                    y_mm = y_rel * scale * 1000.0
-                    dx_ms = float(row[dx_col]) * scale / dt
-                    dy_ms = float(row[dy_col]) * scale / dt
+
+                    # 2. Поворот координат против часовой стрелки
+                    x_rot = x_rel * cos_theta - y_rel * sin_theta
+                    y_rot = x_rel * sin_theta + y_rel * cos_theta
+
+                    # 3. Масштабирование в мм
+                    x_mm = x_rot * scale * 1000.0
+                    y_mm = y_rot * scale * 1000.0
+
+                    # 4. Поворот векторов скорости
+                    dx = float(row[dx_col])
+                    dy = float(row[dy_col])
+                    dx_rot = dx * cos_theta - dy * sin_theta
+                    dy_rot = dx * sin_theta + dy * cos_theta
+
+                    # 5. Масштабирование скоростей в м/с
+                    dx_ms = dx_rot * scale / dt
+                    dy_ms = dy_rot * scale / dt
                     l_ms = float(row[l_col]) * scale / dt
 
                     out_row = {

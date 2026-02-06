@@ -764,6 +764,16 @@ class CoordinateTransformTab(QWidget):
         h_origin.addStretch()
         transform_layout.addLayout(h_origin)
 
+        # Rotation
+        h_rotation = QHBoxLayout()
+        h_rotation.addWidget(QLabel("Rotation angle (°):"))
+        self.rotation_spin = QSpinBox()
+        self.rotation_spin.setRange(0, 360)
+        self.rotation_spin.setValue(0)
+        h_rotation.addWidget(self.rotation_spin)
+        h_rotation.addStretch()
+        transform_layout.addLayout(h_rotation)
+
         # Scale
         h_scale = QHBoxLayout()
         h_scale.addWidget(QLabel("Scale (m/px):"))
@@ -855,6 +865,7 @@ class CoordinateTransformTab(QWidget):
             input_file=csv_path,
             x_origin=self.x_origin_spin.value(),
             y_origin=self.y_origin_spin.value(),
+            rotation_angle=self.rotation_spin.value(),
             scale=self.scale_spin.value(),
             dt=self.dt_spin.value(),
         )
@@ -869,6 +880,7 @@ class CoordinateTransformTab(QWidget):
         self._log("Starting Coordinate Transform...")
         self._log(f"  Input: {csv_path}")
         self._log(f"  X_origin: {params.x_origin}, Y_origin: {params.y_origin}")
+        self._log(f"  Rotation angle: {params.rotation_angle}°")
         self._log(f"  Scale: {params.scale} m/px")
         self._log(f"  dt: {params.dt} s")
         self._log("")
