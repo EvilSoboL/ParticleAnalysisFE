@@ -7,6 +7,7 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -48,8 +49,8 @@ def _(mo):
         exp1_cam2_input,
         exp2_cam1_input,
         exp2_cam2_input,
-        n_avg_input,
         load_btn,
+        n_avg_input,
     )
 
 
@@ -180,6 +181,7 @@ def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn):
         mo.md(f"Сохранено в `{_STATE_FILE2.name}`: {_data}"),
         kind="success",
     )
+    return
 
 
 @app.cell
@@ -220,6 +222,7 @@ def _(
             _col(files_e2c2, idx_e2c2.value, "Эксп. 2 — cam_2"),
         ], justify="start"),
     ])
+    return
 
 
 @app.cell
@@ -228,14 +231,86 @@ def _(mo):
         start=0, stop=65535, step=1, value=1000,
         label="Порог (0–65535)",
     )
-    process_btn = mo.ui.run_button(label="Усреднить и показать")
-
     mo.vstack([
         mo.md("## Пороговый фильтр (16-bit → 8-bit)"),
         threshold_input,
+    ])
+    return (threshold_input,)
+
+
+@app.cell
+def _(mo):
+    preview_cam = mo.ui.dropdown(
+        options={
+            "Эксп. 1 — cam_1": "e1c1",
+            "Эксп. 1 — cam_2": "e1c2",
+            "Эксп. 2 — cam_1": "e2c1",
+            "Эксп. 2 — cam_2": "e2c2",
+        },
+        value="Эксп. 1 — cam_1",
+        label="Камера для превью",
+    )
+    preview_cam
+    return (preview_cam,)
+
+
+@app.cell
+def _(
+    files_e1c1,
+    files_e1c2,
+    files_e2c1,
+    files_e2c2,
+    idx_e1c1,
+    idx_e1c2,
+    idx_e2c1,
+    idx_e2c2,
+    mo,
+    preview_cam,
+    threshold_input,
+):
+    import numpy as _np
+    from PIL import Image as _Image
+
+    mo.stop(not files_e1c1 or idx_e1c1 is None, mo.md("*Сначала загрузите файлы и введите номера*"))
+
+    _thr = threshold_input.value
+
+    _all = {
+        "e1c1": (files_e1c1, idx_e1c1.value),
+        "e1c2": (files_e1c2, idx_e1c2.value),
+        "e2c1": (files_e2c1, idx_e2c1.value),
+        "e2c2": (files_e2c2, idx_e2c2.value),
+    }
+    _files, _indices = _all[preview_cam.value]
+    _k = int(_indices[0])
+
+    if _k in _files:
+        _arr = _np.array(_Image.open(_files[_k]), dtype=_np.uint16)
+        _orig = _Image.fromarray((_arr / 65535.0 * 255).astype(_np.uint8))
+        _filt = _arr.copy()
+        _filt[_filt < _thr] = 0
+        _filt_img = _Image.fromarray((_filt / 65535.0 * 255).astype(_np.uint8))
+        _out = mo.vstack([
+            mo.md(f"### Превью — `#{_k}` — порог {_thr}"),
+            mo.hstack([
+                mo.vstack([mo.md("**Оригинал**"), mo.image(_orig, width=800)]),
+                mo.vstack([mo.md(f"**С фильтром**"), mo.image(_filt_img, width=800)]),
+            ]),
+        ])
+    else:
+        _out = mo.callout(mo.md(f"Файл #{_k} не найден"), kind="warn")
+
+    _out
+
+
+@app.cell
+def _(mo):
+    process_btn = mo.ui.run_button(label="Усреднить и показать")
+    mo.vstack([
+        mo.md("### Применить ко всем выбранным фотографиям"),
         process_btn,
     ])
-    return process_btn, threshold_input
+    return (process_btn,)
 
 
 @app.cell
@@ -292,6 +367,7 @@ def _(
         ])
     except Exception as e:
         mo.callout(mo.md(f"**Ошибка:** {e}"), kind="danger")
+    return
 
 
 if __name__ == "__main__":
