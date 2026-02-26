@@ -62,18 +62,23 @@ def _(
     load_btn,
     mo,
 ):
+    import re as _re
     from pathlib import Path as _Path
 
     mo.stop(not load_btn.value, mo.md("*Нажмите «Загрузить файлы»*"))
 
-    def _get_files(folder: str) -> list:
+    def _get_files(folder: str) -> dict:
+        """Возвращает {номер_из_имени: путь}, отсортированный по номеру."""
         p = _Path(folder)
         if not p.exists():
             raise FileNotFoundError(f"Папка не найдена: {folder}")
-        return sorted([
-            str(f) for f in p.iterdir()
-            if f.is_file() and f.name.endswith("_b.png")
-        ])
+        result = {}
+        for f in p.iterdir():
+            if f.is_file() and f.name.endswith("_b.png"):
+                m = _re.search(r'(\d+)_b\.png$', f.name)
+                if m:
+                    result[int(m.group(1))] = str(f)
+        return dict(sorted(result.items()))
 
     try:
         files_e1c1 = _get_files(exp1_cam1_input.value)
@@ -81,11 +86,11 @@ def _(
         files_e2c1 = _get_files(exp2_cam1_input.value)
         files_e2c2 = _get_files(exp2_cam2_input.value)
 
-        def _tbl(files, label):
+        def _tbl(files: dict, label: str):
             return mo.vstack([
                 mo.md(f"**{label}** — {len(files)} файлов"),
                 mo.ui.table(
-                    [{"#": i, "файл": _Path(f).name} for i, f in enumerate(files)],
+                    [{"#": k, "файл": _Path(v).name} for k, v in files.items()],
                     selection=None,
                     page_size=10,
                 ),
@@ -99,7 +104,7 @@ def _(
         ])
     except FileNotFoundError as e:
         _display = mo.callout(mo.md(f"**Ошибка:** {e}"), kind="danger")
-        files_e1c1 = files_e1c2 = files_e2c1 = files_e2c2 = []
+        files_e1c1 = files_e1c2 = files_e2c1 = files_e2c2 = {}
 
     _display
     return files_e1c1, files_e1c2, files_e2c1, files_e2c2
@@ -115,8 +120,6 @@ def _(files_e1c1, files_e1c2, files_e2c1, files_e2c2, mo, n_avg_input):
     _N = n_avg_input.value
     _STATE_FILE = _Path(__file__).parent / "indices_state.json"
 
-    # Загружаем сохранённые значения, дополняем/обрезаем до N
-    _fallback = list(range(_N))
     _saved = {}
     if _STATE_FILE.exists():
         try:
@@ -124,26 +127,30 @@ def _(files_e1c1, files_e1c2, files_e2c1, files_e2c2, mo, n_avg_input):
         except Exception:
             _saved = {}
 
-    def _load_defaults(key):
+    def _load_defaults(key, files: dict) -> list:
+        keys = list(files.keys())
         vals = _saved.get(key, [])
-        return (vals + list(range(len(vals), _N)))[:_N]
+        # дополняем до N ключами из файлов если не хватает
+        extra = [k for k in keys if k not in vals]
+        return (vals + extra)[:_N]
 
-    def _idx_arr(defaults, max_val, label):
+    def _idx_arr(defaults, files: dict, label: str):
+        max_val = max(files.keys()) if files else 0
         return mo.ui.array(
             [mo.ui.number(start=0, stop=max_val, step=1, value=v) for v in defaults],
             label=label,
         )
 
-    idx_e1c1 = _idx_arr(_load_defaults("e1c1"), len(files_e1c1) - 1, f"Эксп. 1 — cam_1 ({_N} номеров)")
-    idx_e1c2 = _idx_arr(_load_defaults("e1c2"), len(files_e1c2) - 1, f"Эксп. 1 — cam_2 ({_N} номеров)")
-    idx_e2c1 = _idx_arr(_load_defaults("e2c1"), len(files_e2c1) - 1, f"Эксп. 2 — cam_1 ({_N} номеров)")
-    idx_e2c2 = _idx_arr(_load_defaults("e2c2"), len(files_e2c2) - 1, f"Эксп. 2 — cam_2 ({_N} номеров)")
+    idx_e1c1 = _idx_arr(_load_defaults("e1c1", files_e1c1), files_e1c1, f"Эксп. 1 — cam_1 ({_N} номеров)")
+    idx_e1c2 = _idx_arr(_load_defaults("e1c2", files_e1c2), files_e1c2, f"Эксп. 1 — cam_2 ({_N} номеров)")
+    idx_e2c1 = _idx_arr(_load_defaults("e2c1", files_e2c1), files_e2c1, f"Эксп. 2 — cam_1 ({_N} номеров)")
+    idx_e2c2 = _idx_arr(_load_defaults("e2c2", files_e2c2), files_e2c2, f"Эксп. 2 — cam_2 ({_N} номеров)")
 
     save_idx_btn = mo.ui.run_button(label="Сохранить номера")
 
     mo.vstack([
         mo.md("## Выбор фотографий для усреднения"),
-        mo.md("Введите номера строк из таблиц выше (колонка **#**)"),
+        mo.md("Введите номера из колонки **#** таблиц выше"),
         mo.hstack([
             mo.vstack([mo.md("### Эксперимент 1"), idx_e1c1, idx_e1c2]),
             mo.vstack([mo.md("### Эксперимент 2"), idx_e2c1, idx_e2c2]),
@@ -187,32 +194,22 @@ def _(
     idx_e2c2,
     mo,
 ):
-    import numpy as _np
-    from PIL import Image as _Image
     from pathlib import Path as _Path
 
     mo.stop(not files_e1c1 or idx_e1c1 is None, mo.md("*Сначала загрузите файлы и введите номера*"))
 
-    def _thumb(path: str) -> _Image.Image:
-        arr = _np.array(_Image.open(path), dtype=_np.uint16)
-        arr_8bit = (arr / 65535.0 * 255).astype(_np.uint8)
-        return _Image.fromarray(arr_8bit)
-
-    def _col(files, indices, label):
-        items = [mo.md(f"#### {label}")]
+    def _col(files: dict, indices, label: str):
+        rows = []
         for idx in indices:
-            i = int(idx)
-            if 0 <= i < len(files):
-                try:
-                    items.append(mo.vstack([
-                        mo.md(f"`#{i}` `{_Path(files[i]).name}`"),
-                        mo.image(_thumb(files[i]), width=320),
-                    ]))
-                except Exception as e:
-                    items.append(mo.md(f"*Ошибка: {e}*"))
+            k = int(idx)
+            if k in files:
+                rows.append({"#": k, "файл": _Path(files[k]).name})
             else:
-                items.append(mo.md(f"*Индекс {i} вне диапазона*"))
-        return mo.vstack(items)
+                rows.append({"#": k, "файл": f"не найден"})
+        return mo.vstack([
+            mo.md(f"#### {label}"),
+            mo.ui.table(rows, selection=None),
+        ])
 
     mo.vstack([
         mo.md("## Выбранные фотографии"),
@@ -265,7 +262,7 @@ def _(
 
     _thr = threshold_input.value
 
-    def _load_avg(files, indices):
+    def _load_avg(files: dict, indices):
         arrays = []
         for idx in indices:
             arr = _np.array(_Image.open(files[int(idx)]), dtype=_np.float32)
