@@ -162,7 +162,7 @@ def _(files_e1c1, files_e1c2, files_e2c1, files_e2c2, mo, n_avg_input):
 
 
 @app.cell
-def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn):
+def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn, threshold_input):
     import json as _json2
     from pathlib import Path as _Path2
 
@@ -170,6 +170,7 @@ def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn):
 
     _STATE_FILE2 = _Path2(__file__).parent / "indices_state.json"
     _data = {
+        "threshold": int(threshold_input.value),
         "e1c1": [int(v) for v in idx_e1c1.value],
         "e1c2": [int(v) for v in idx_e1c2.value],
         "e2c1": [int(v) for v in idx_e2c1.value],
@@ -178,7 +179,7 @@ def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn):
     _STATE_FILE2.write_text(_json2.dumps(_data, indent=2), encoding="utf-8")
 
     mo.callout(
-        mo.md(f"Сохранено в `{_STATE_FILE2.name}`: {_data}"),
+        mo.md(f"Сохранено в `{_STATE_FILE2.name}`"),
         kind="success",
     )
     return
@@ -227,8 +228,21 @@ def _(
 
 @app.cell
 def _(mo):
+    import json as _json_thr
+    from pathlib import Path as _Path_thr
+
+    _STATE_FILE_THR = _Path_thr(__file__).parent / "indices_state.json"
+    _thr_default = 1000
+    if _STATE_FILE_THR.exists():
+        try:
+            _thr_default = _json_thr.loads(
+                _STATE_FILE_THR.read_text(encoding="utf-8")
+            ).get("threshold", 1000)
+        except Exception:
+            pass
+
     threshold_input = mo.ui.number(
-        start=0, stop=65535, step=1, value=1000,
+        start=0, stop=65535, step=1, value=_thr_default,
         label="Порог (0–65535)",
     )
     mo.vstack([
@@ -338,7 +352,8 @@ def _(
 
     _thr = threshold_input.value
 
-    def _sum_cam(files: dict, indices):
+    def _sum_cam_arr(files: dict, indices):
+        """Возвращает numpy float64 массив 0-255, нормализованный по frame_max."""
         total = None
         frame_max = 0.0
         for idx in indices:
@@ -348,31 +363,110 @@ def _(
             total = arr if total is None else total + arr
         if frame_max > 0:
             total = _np.clip(total / frame_max * 255, 0, 255)
-        return _Image.fromarray(total.astype(_np.uint8))
+        return total
+
+    def _to_pil(arr):
+        return _Image.fromarray(_np.clip(arr, 0, 255).astype(_np.uint8))
 
     try:
-        _s_e1c1 = _sum_cam(files_e1c1, idx_e1c1.value)
-        _s_e1c2 = _sum_cam(files_e1c2, idx_e1c2.value)
-        _s_e2c1 = _sum_cam(files_e2c1, idx_e2c1.value)
-        _s_e2c2 = _sum_cam(files_e2c2, idx_e2c2.value)
+        sum_e1c1 = _sum_cam_arr(files_e1c1, idx_e1c1.value)
+        sum_e1c2 = _sum_cam_arr(files_e1c2, idx_e1c2.value)
+        sum_e2c1 = _sum_cam_arr(files_e2c1, idx_e2c1.value)
+        sum_e2c2 = _sum_cam_arr(files_e2c2, idx_e2c2.value)
 
         _out = mo.vstack([
             mo.md(f"## Суммарная интенсивность (порог: {_thr} / 65535)"),
             mo.md("### Эксперимент 1"),
             mo.hstack([
-                mo.vstack([mo.md("**cam_1**"), mo.image(_s_e1c1, width=700)]),
-                mo.vstack([mo.md("**cam_2**"), mo.image(_s_e1c2, width=700)]),
+                mo.vstack([mo.md("**cam_1**"), mo.image(_to_pil(sum_e1c1), width=700)]),
+                mo.vstack([mo.md("**cam_2**"), mo.image(_to_pil(sum_e1c2), width=700)]),
             ]),
             mo.md("### Эксперимент 2"),
             mo.hstack([
-                mo.vstack([mo.md("**cam_1**"), mo.image(_s_e2c1, width=700)]),
-                mo.vstack([mo.md("**cam_2**"), mo.image(_s_e2c2, width=700)]),
+                mo.vstack([mo.md("**cam_1**"), mo.image(_to_pil(sum_e2c1), width=700)]),
+                mo.vstack([mo.md("**cam_2**"), mo.image(_to_pil(sum_e2c2), width=700)]),
             ]),
         ])
     except Exception as e:
         _out = mo.callout(mo.md(f"**Ошибка:** {e}"), kind="danger")
+        sum_e1c1 = sum_e1c2 = sum_e2c1 = sum_e2c2 = None
 
     _out
+    return sum_e1c1, sum_e1c2, sum_e2c1, sum_e2c2
+
+
+@app.cell
+def _(mo):
+    c1_r = mo.ui.number(0, 255, step=1, value=255, label="R")
+    c1_g = mo.ui.number(0, 255, step=1, value=0,   label="G")
+    c1_b = mo.ui.number(0, 255, step=1, value=0,   label="B")
+    c2_r = mo.ui.number(0, 255, step=1, value=0,   label="R")
+    c2_g = mo.ui.number(0, 255, step=1, value=0,   label="G")
+    c2_b = mo.ui.number(0, 255, step=1, value=255, label="B")
+    shift_input = mo.ui.number(-2000, 2000, step=1, value=0,
+                               label="Сдвиг cam_1 вниз (пиксели, отриц. = вверх)")
+
+    mo.vstack([
+        mo.md("## Наложение cam_1 на cam_2"),
+        mo.hstack([
+            mo.vstack([mo.md("**Цвет cam_1**"), c1_r, c1_g, c1_b]),
+            mo.vstack([mo.md("**Цвет cam_2**"), c2_r, c2_g, c2_b]),
+        ]),
+        shift_input,
+    ])
+    return c1_b, c1_g, c1_r, c2_b, c2_g, c2_r, shift_input
+
+
+@app.cell
+def _(
+    c1_b, c1_g, c1_r,
+    c2_b, c2_g, c2_r,
+    mo,
+    shift_input,
+    sum_e1c1, sum_e1c2,
+    sum_e2c1, sum_e2c2,
+):
+    import numpy as _np
+    from PIL import Image as _Image
+
+    mo.stop(sum_e1c1 is None, mo.md("*Нажмите «Суммировать и показать»*"))
+
+    _col1 = (float(c1_r.value), float(c1_g.value), float(c1_b.value))
+    _col2 = (float(c2_r.value), float(c2_g.value), float(c2_b.value))
+    _shift = int(shift_input.value)
+
+    def _shift_arr(arr):
+        if _shift == 0:
+            return arr
+        H = arr.shape[0]
+        out = _np.zeros_like(arr)
+        if _shift > 0:
+            out[_shift:] = arr[:max(0, H - _shift)]
+        else:
+            n = -_shift
+            out[:max(0, H - n)] = arr[n:]
+        return out
+
+    def _make_overlay(arr_c1, arr_c2):
+        I1 = _shift_arr(arr_c1) / 255.0   # 0=фон, 1=частица
+        I2 = arr_c2 / 255.0
+        # Белый фон + цветные частицы: вычитаем пигмент из белого
+        R = _np.clip(255 - I1 * (255 - _col1[0]) - I2 * (255 - _col2[0]), 0, 255)
+        G = _np.clip(255 - I1 * (255 - _col1[1]) - I2 * (255 - _col2[1]), 0, 255)
+        B = _np.clip(255 - I1 * (255 - _col1[2]) - I2 * (255 - _col2[2]), 0, 255)
+        rgb = _np.stack([R, G, B], axis=-1).astype(_np.uint8)
+        return _Image.fromarray(rgb, mode="RGB")
+
+    _ov_e1 = _make_overlay(sum_e1c1, sum_e1c2)
+    _ov_e2 = _make_overlay(sum_e2c1, sum_e2c2)
+
+    mo.vstack([
+        mo.md(f"## Наложение (сдвиг cam_1: {_shift} пкс)"),
+        mo.hstack([
+            mo.vstack([mo.md("### Эксперимент 1"), mo.image(_ov_e1, width=900)]),
+            mo.vstack([mo.md("### Эксперимент 2"), mo.image(_ov_e2, width=900)]),
+        ]),
+    ])
 
 
 if __name__ == "__main__":
