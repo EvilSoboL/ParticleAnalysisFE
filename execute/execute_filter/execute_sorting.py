@@ -436,7 +436,7 @@ def example_gui_usage():
 
     # === ШАГ 1: Задание параметров (из GUI элементов) ===
     parameters = SortingParameters(
-        input_folder=r"C:\Users\evils\OneDrive\Desktop\S6_DT600_WA600_16bit",
+        input_folder=r"D:\2f_2c_DT_WA\S8_DT600_WA600",
         validate_format=True,
         enable_progress_callback=True
     )
