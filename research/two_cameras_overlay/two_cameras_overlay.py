@@ -285,11 +285,12 @@ def _(
     _k = int(_indices[0])
 
     if _k in _files:
-        _arr = _np.array(_Image.open(_files[_k]), dtype=_np.uint16)
-        _orig = _Image.fromarray((_arr / 65535.0 * 255).astype(_np.uint8))
+        _arr = _np.array(_Image.open(_files[_k]), dtype=_np.float64)
+        _arr_max = _arr.max() or 1.0
+        _orig = _Image.fromarray((_np.clip(_arr / _arr_max * 255, 0, 255)).astype(_np.uint8))
         _filt = _arr.copy()
         _filt[_filt < _thr] = 0
-        _filt_img = _Image.fromarray((_filt / 65535.0 * 255).astype(_np.uint8))
+        _filt_img = _Image.fromarray((_np.clip(_filt / _arr_max * 255, 0, 255)).astype(_np.uint8))
         _out = mo.vstack([
             mo.md(f"### Превью — `#{_k}` — порог {_thr}"),
             mo.hstack([
@@ -305,7 +306,7 @@ def _(
 
 @app.cell
 def _(mo):
-    process_btn = mo.ui.run_button(label="Усреднить и показать")
+    process_btn = mo.ui.run_button(label="Суммировать и показать")
     mo.vstack([
         mo.md("### Применить ко всем выбранным фотографиям"),
         process_btn,
@@ -332,42 +333,45 @@ def _(
 
     mo.stop(
         not process_btn.value or not files_e1c1 or idx_e1c1 is None,
-        mo.md("*Нажмите «Усреднить и показать»*"),
+        mo.md("*Нажмите «Суммировать и показать»*"),
     )
 
     _thr = threshold_input.value
 
-    def _load_avg(files: dict, indices):
-        arrays = []
+    def _sum_cam(files: dict, indices):
+        total = None
         for idx in indices:
-            arr = _np.array(_Image.open(files[int(idx)]), dtype=_np.float32)
+            arr = _np.array(_Image.open(files[int(idx)]), dtype=_np.float64)
             arr[arr < _thr] = 0
-            arrays.append(arr)
-        avg = _np.mean(arrays, axis=0)
-        return _Image.fromarray((avg / 65535.0 * 255).astype(_np.uint8))
+            total = arr if total is None else total + arr
+        max_val = float(total.max())
+        if max_val > 0:
+            total = total / max_val * 255
+        return _Image.fromarray(_np.clip(total, 0, 255).astype(_np.uint8))
 
     try:
-        _r_e1c1 = _load_avg(files_e1c1, idx_e1c1.value)
-        _r_e1c2 = _load_avg(files_e1c2, idx_e1c2.value)
-        _r_e2c1 = _load_avg(files_e2c1, idx_e2c1.value)
-        _r_e2c2 = _load_avg(files_e2c2, idx_e2c2.value)
+        _s_e1c1 = _sum_cam(files_e1c1, idx_e1c1.value)
+        _s_e1c2 = _sum_cam(files_e1c2, idx_e1c2.value)
+        _s_e2c1 = _sum_cam(files_e2c1, idx_e2c1.value)
+        _s_e2c2 = _sum_cam(files_e2c2, idx_e2c2.value)
 
-        mo.vstack([
-            mo.md(f"## Результат усреднения (порог: {_thr} / 65535)"),
+        _out = mo.vstack([
+            mo.md(f"## Суммарная интенсивность (порог: {_thr} / 65535)"),
             mo.md("### Эксперимент 1"),
             mo.hstack([
-                mo.vstack([mo.md("**cam_1**"), mo.image(_r_e1c1, width=700)]),
-                mo.vstack([mo.md("**cam_2**"), mo.image(_r_e1c2, width=700)]),
+                mo.vstack([mo.md("**cam_1**"), mo.image(_s_e1c1, width=700)]),
+                mo.vstack([mo.md("**cam_2**"), mo.image(_s_e1c2, width=700)]),
             ]),
             mo.md("### Эксперимент 2"),
             mo.hstack([
-                mo.vstack([mo.md("**cam_1**"), mo.image(_r_e2c1, width=700)]),
-                mo.vstack([mo.md("**cam_2**"), mo.image(_r_e2c2, width=700)]),
+                mo.vstack([mo.md("**cam_1**"), mo.image(_s_e2c1, width=700)]),
+                mo.vstack([mo.md("**cam_2**"), mo.image(_s_e2c2, width=700)]),
             ]),
         ])
     except Exception as e:
-        mo.callout(mo.md(f"**Ошибка:** {e}"), kind="danger")
-    return
+        _out = mo.callout(mo.md(f"**Ошибка:** {e}"), kind="danger")
+
+    _out
 
 
 if __name__ == "__main__":
