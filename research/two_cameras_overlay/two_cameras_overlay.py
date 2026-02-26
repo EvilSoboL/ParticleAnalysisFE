@@ -176,6 +176,56 @@ def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn):
 
 
 @app.cell
+def _(
+    files_e1c1,
+    files_e1c2,
+    files_e2c1,
+    files_e2c2,
+    idx_e1c1,
+    idx_e1c2,
+    idx_e2c1,
+    idx_e2c2,
+    mo,
+):
+    import numpy as _np
+    from PIL import Image as _Image
+    from pathlib import Path as _Path
+
+    mo.stop(not files_e1c1 or idx_e1c1 is None, mo.md("*Сначала загрузите файлы и введите номера*"))
+
+    def _thumb(path: str) -> _Image.Image:
+        arr = _np.array(_Image.open(path), dtype=_np.uint16)
+        arr_8bit = (arr / 65535.0 * 255).astype(_np.uint8)
+        return _Image.fromarray(arr_8bit)
+
+    def _col(files, indices, label):
+        items = [mo.md(f"#### {label}")]
+        for idx in indices:
+            i = int(idx)
+            if 0 <= i < len(files):
+                try:
+                    items.append(mo.vstack([
+                        mo.md(f"`#{i}` `{_Path(files[i]).name}`"),
+                        mo.image(_thumb(files[i]), width=320),
+                    ]))
+                except Exception as e:
+                    items.append(mo.md(f"*Ошибка: {e}*"))
+            else:
+                items.append(mo.md(f"*Индекс {i} вне диапазона*"))
+        return mo.vstack(items)
+
+    mo.vstack([
+        mo.md("## Выбранные фотографии"),
+        mo.hstack([
+            _col(files_e1c1, idx_e1c1.value, "Эксп. 1 — cam_1"),
+            _col(files_e1c2, idx_e1c2.value, "Эксп. 1 — cam_2"),
+            _col(files_e2c1, idx_e2c1.value, "Эксп. 2 — cam_1"),
+            _col(files_e2c2, idx_e2c2.value, "Эксп. 2 — cam_2"),
+        ], justify="start"),
+    ])
+
+
+@app.cell
 def _(mo):
     threshold_input = mo.ui.number(
         start=0, stop=65535, step=1, value=1000,
