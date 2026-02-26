@@ -340,14 +340,15 @@ def _(
 
     def _sum_cam(files: dict, indices):
         total = None
+        frame_max = 0.0
         for idx in indices:
             arr = _np.array(_Image.open(files[int(idx)]), dtype=_np.float64)
             arr[arr < _thr] = 0
+            frame_max = max(frame_max, float(arr.max()))
             total = arr if total is None else total + arr
-        max_val = float(total.max())
-        if max_val > 0:
-            total = total / max_val * 255
-        return _Image.fromarray(_np.clip(total, 0, 255).astype(_np.uint8))
+        if frame_max > 0:
+            total = _np.clip(total / frame_max * 255, 0, 255)
+        return _Image.fromarray(total.astype(_np.uint8))
 
     try:
         _s_e1c1 = _sum_cam(files_e1c1, idx_e1c1.value)
