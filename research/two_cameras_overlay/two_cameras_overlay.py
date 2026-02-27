@@ -162,7 +162,7 @@ def _(files_e1c1, files_e1c2, files_e2c1, files_e2c2, mo, n_avg_input):
 
 
 @app.cell
-def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn, threshold_input):
+def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, lower_bound_input, mo, save_idx_btn, threshold_input):
     import json as _json2
     from pathlib import Path as _Path2
 
@@ -171,6 +171,7 @@ def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, mo, save_idx_btn, threshold_input)
     _STATE_FILE2 = _Path2(__file__).parent / "indices_state.json"
     _data = {
         "threshold": int(threshold_input.value),
+        "lower_bound": int(lower_bound_input.value),
         "e1c1": [int(v) for v in idx_e1c1.value],
         "e1c2": [int(v) for v in idx_e1c2.value],
         "e2c1": [int(v) for v in idx_e2c1.value],
@@ -233,23 +234,33 @@ def _(mo):
 
     _STATE_FILE_THR = _Path_thr(__file__).parent / "indices_state.json"
     _thr_default = 1000
+    _lb_default = 1000
     if _STATE_FILE_THR.exists():
         try:
-            _thr_default = _json_thr.loads(
+            _saved_thr = _json_thr.loads(
                 _STATE_FILE_THR.read_text(encoding="utf-8")
-            ).get("threshold", 1000)
+            )
+            _thr_default = _saved_thr.get("threshold", 1000)
+            _lb_default = _saved_thr.get("lower_bound", _thr_default)
         except Exception:
             pass
 
     threshold_input = mo.ui.number(
         start=0, stop=65535, step=1, value=_thr_default,
-        label="Порог (0–65535)",
+        label="Порог обнуления (0–65535)",
+    )
+    lower_bound_input = mo.ui.number(
+        start=0, stop=65535, step=1, value=_lb_default,
+        label="Нижняя граница сигнала (0–65535)",
     )
     mo.vstack([
-        mo.md("## Пороговый фильтр (16-bit → 8-bit)"),
+        mo.md("## Пороговые фильтры (16-bit)"),
+        mo.md("**Фильтр 1:** пиксели ниже порога обнуляются."),
         threshold_input,
+        mo.md("**Фильтр 2:** ненулевые пиксели ниже нижней границы поднимаются до неё."),
+        lower_bound_input,
     ])
-    return (threshold_input,)
+    return (threshold_input, lower_bound_input)
 
 
 @app.cell
@@ -278,6 +289,7 @@ def _(
     idx_e1c2,
     idx_e2c1,
     idx_e2c2,
+    lower_bound_input,
     mo,
     preview_cam,
     threshold_input,
@@ -288,6 +300,7 @@ def _(
     mo.stop(not files_e1c1 or idx_e1c1 is None, mo.md("*Сначала загрузите файлы и введите номера*"))
 
     _thr = threshold_input.value
+    _lb = lower_bound_input.value
 
     _all = {
         "e1c1": (files_e1c1, idx_e1c1.value),
@@ -304,12 +317,13 @@ def _(
         _orig = _Image.fromarray((_np.clip(_arr / _arr_max * 255, 0, 255)).astype(_np.uint8))
         _filt = _arr.copy()
         _filt[_filt < _thr] = 0
+        _filt = _np.where((_filt > 0) & (_filt < _lb), _lb, _filt)
         _filt_img = _Image.fromarray((_np.clip(_filt / _arr_max * 255, 0, 255)).astype(_np.uint8))
         _out = mo.vstack([
-            mo.md(f"### Превью — `#{_k}` — порог {_thr}"),
+            mo.md(f"### Превью — `#{_k}` — порог {_thr}, нижняя граница {_lb}"),
             mo.hstack([
                 mo.vstack([mo.md("**Оригинал**"), mo.image(_orig, width=800)]),
-                mo.vstack([mo.md(f"**С фильтром**"), mo.image(_filt_img, width=800)]),
+                mo.vstack([mo.md(f"**С фильтрами**"), mo.image(_filt_img, width=800)]),
             ]),
         ])
     else:
@@ -338,6 +352,7 @@ def _(
     idx_e1c2,
     idx_e2c1,
     idx_e2c2,
+    lower_bound_input,
     mo,
     process_btn,
     threshold_input,
@@ -351,6 +366,7 @@ def _(
     )
 
     _thr = threshold_input.value
+    _lb = lower_bound_input.value
 
     def _sum_cam_arr(files: dict, indices):
         """Возвращает numpy float64 массив 0-255, нормализованный по frame_max."""
@@ -359,6 +375,7 @@ def _(
         for idx in indices:
             arr = _np.array(_Image.open(files[int(idx)]), dtype=_np.float64)
             arr[arr < _thr] = 0
+            arr = _np.where((arr > 0) & (arr < _lb), _lb, arr)
             frame_max = max(frame_max, float(arr.max()))
             total = arr if total is None else total + arr
         if frame_max > 0:
