@@ -64,7 +64,8 @@ class SortAndBinarize:
     """
 
     def __init__(self, input_folder: str, threshold: int = 10000,
-                 validate_format: bool = True):
+                 validate_format: bool = True,
+                 output_base_folder: Optional[str] = None):
         """
         Инициализация.
 
@@ -83,7 +84,7 @@ class SortAndBinarize:
             raise FileNotFoundError(f"Входная папка не найдена: {input_folder}")
 
         # Выходная структура: {input}_cam_sorted/binary_filter_{threshold}/cam_1|cam_2
-        self.sorted_folder = Path(f"{input_folder}_cam_sorted")
+        self.sorted_folder = Path(output_base_folder) if output_base_folder else Path(f"{input_folder}_cam_sorted")
         self.output_folder = self.sorted_folder / f"binary_filter_{threshold}"
         self.cam1_folder = self.output_folder / "cam_1"
         self.cam2_folder = self.output_folder / "cam_2"
@@ -99,10 +100,10 @@ class SortAndBinarize:
 
     def _create_output_structure(self) -> None:
         """Создает структуру выходных папок."""
-        self.sorted_folder.mkdir(exist_ok=True)
-        self.output_folder.mkdir(exist_ok=True)
-        self.cam1_folder.mkdir(exist_ok=True)
-        self.cam2_folder.mkdir(exist_ok=True)
+        self.sorted_folder.mkdir(parents=True, exist_ok=True)
+        self.output_folder.mkdir(parents=True, exist_ok=True)
+        self.cam1_folder.mkdir(parents=True, exist_ok=True)
+        self.cam2_folder.mkdir(parents=True, exist_ok=True)
         logger.info(f"Создана структура папок: {self.output_folder}")
 
     def _get_sorted_images(self) -> List[Path]:

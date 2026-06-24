@@ -52,6 +52,8 @@ class SortBinarizeParameters:
     threshold: int = 10000  # Пороговое значение бинаризации (0-65535)
     validate_format: bool = True  # Валидировать формат изображений (16-bit PNG)
     enable_progress_callback: bool = True  # Включить callback для прогресса
+    output_base_folder: Optional[str] = None
+    experiment_name: Optional[str] = None
 
     # GUI ПОДСКАЗКИ (не используются в обработке, только для GUI)
     threshold_min: int = 0  # Минимальное значение для slider
@@ -88,6 +90,11 @@ class SortBinarizeParameters:
         # Проверка порога
         if not (self.threshold_min <= self.threshold <= self.threshold_max):
             return False, f"Порог должен быть в диапазоне [{self.threshold_min}, {self.threshold_max}]"
+
+        if self.output_base_folder:
+            output_path = Path(self.output_base_folder)
+            if output_path.exists() and not output_path.is_dir():
+                return False, f"Output base path is not a folder: {self.output_base_folder}"
 
         return True, ""
 
@@ -135,11 +142,12 @@ class SortBinarizeExecutor:
             self.processor = SortAndBinarize(
                 input_folder=parameters.input_folder,
                 threshold=parameters.threshold,
-                validate_format=parameters.validate_format
+                validate_format=parameters.validate_format,
+                output_base_folder=parameters.output_base_folder
             )
             logger.info(
                 f"Параметры установлены: input_folder={parameters.input_folder}, "
-                f"threshold={parameters.threshold}"
+                f"threshold={parameters.threshold}, output_base_folder={parameters.output_base_folder}"
             )
             return True, ""
         except Exception as e:
@@ -200,6 +208,10 @@ class SortBinarizeExecutor:
         logger.info("ЗАПУСК СОРТИРОВКИ И БИНАРИЗАЦИИ")
         logger.info(f"Входная папка: {self.parameters.input_folder}")
         logger.info(f"Порог: {self.parameters.threshold}")
+        if self.parameters.experiment_name:
+            logger.info(f"Experiment: {self.parameters.experiment_name}")
+        if self.parameters.output_base_folder:
+            logger.info(f"Output base folder: {self.parameters.output_base_folder}")
         logger.info(f"Валидация формата: {'Да' if self.parameters.validate_format else 'Нет'}")
         logger.info("=" * 60)
 
@@ -245,6 +257,11 @@ class SortBinarizeExecutor:
 
         input_path = Path(self.parameters.input_folder)
         png_files = list(input_path.glob("*.png"))
+        output_base = (
+            Path(self.parameters.output_base_folder)
+            if self.parameters.output_base_folder
+            else Path(f"{input_path}_cam_sorted")
+        )
 
         return {
             'total_files': len(png_files),
@@ -253,13 +270,15 @@ class SortBinarizeExecutor:
             'expected_cam1_pairs': len(png_files) // 4,
             'expected_cam2_pairs': len(png_files) // 4,
             'input_folder': str(input_path),
-            'output_folder': f"{input_path}_cam_sorted/binary_filter_{self.parameters.threshold}",
+            'output_folder': str(output_base / f"binary_filter_{self.parameters.threshold}"),
             'threshold': self.parameters.threshold
         }
 
 
 def run_sort_and_binarize(input_folder: str, threshold: int = 10000,
                           validate_format: bool = True,
+                          output_base_folder: Optional[str] = None,
+                          experiment_name: Optional[str] = None,
                           progress_callback: Optional[Callable] = None) -> SortBinarizeResult:
     """
     Удобная функция для запуска сортировки и бинаризации без создания объектов.
@@ -284,6 +303,8 @@ def run_sort_and_binarize(input_folder: str, threshold: int = 10000,
         input_folder=input_folder,
         threshold=threshold,
         validate_format=validate_format,
+        output_base_folder=output_base_folder,
+        experiment_name=experiment_name,
         enable_progress_callback=progress_callback is not None
     )
 

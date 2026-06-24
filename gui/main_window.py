@@ -20,12 +20,18 @@ if project_root not in sys.path:
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QComboBox, QProgressBar, QTextEdit, QGroupBox, QFileDialog, QMessageBox
+    QComboBox, QProgressBar, QTextEdit, QGroupBox, QFileDialog, QMessageBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 
 from execute.execute_filter.execute_sort_binarize import (
     SortBinarizeExecutor, SortBinarizeParameters
+)
+from src.data_processing.experiment_preprocess import (
+    build_output_base_folder,
+    default_processed_root,
+    scan_experiment_root,
 )
 from execute.execute_analysis.execute_ptv_analysis import (
     PTVExecutor, PTVParameters
@@ -116,6 +122,182 @@ def _file_row(label_text: str, parent: QWidget, filter_str: str = "CSV files (*.
 
 
 # ---------------------------------------------------------------------------
+# Tab 0: Prepare Experiments
+# ---------------------------------------------------------------------------
+class PrepareExperimentsTab(QWidget):
+    def __init__(self, sort_tab, tabs=None, parent=None):
+        super().__init__(parent)
+        self.sort_tab = sort_tab
+        self.tabs = tabs
+        self._records = []
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        root_layout, self.root_line = _folder_row("Root folder:", self)
+        layout.addLayout(root_layout)
+
+        output_layout, self.output_root_line = _folder_row("Output root:", self)
+        self.output_root_line.setPlaceholderText("Optional; defaults to <root>_processed")
+        layout.addLayout(output_layout)
+
+        btn_layout = QHBoxLayout()
+        self.scan_btn = QPushButton("Scan")
+        self.use_btn = QPushButton("Use in Sort + Binarize")
+        self.use_btn.setEnabled(False)
+        btn_layout.addWidget(self.scan_btn)
+        btn_layout.addWidget(self.use_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        self.status_label = QLabel("Ready")
+        layout.addWidget(self.status_label)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels([
+            "ID", "Experiment name", "Source folder", "PNG", "Status", "Output base", "Issues"
+        ])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.Stretch)
+        layout.addWidget(self.table)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(100)
+        layout.addWidget(self.log_text)
+
+        self.scan_btn.clicked.connect(self._scan)
+        self.use_btn.clicked.connect(self._use_selected)
+        self.table.itemDoubleClicked.connect(lambda _item: self._use_selected())
+        self.root_line.textEdited.connect(self._on_root_edited)
+        self.output_root_line.textEdited.connect(self._refresh_output_base_column)
+
+    def _on_root_edited(self, text: str):
+        if text.strip() and not self.output_root_line.text().strip():
+            self.output_root_line.setPlaceholderText(default_processed_root(text.strip()))
+
+    def _scan(self):
+        root_folder = self.root_line.text().strip()
+        if not root_folder:
+            QMessageBox.warning(self, "Warning", "Select experiment root folder.")
+            return
+
+        if not self.output_root_line.text().strip():
+            self.output_root_line.setText(default_processed_root(root_folder))
+
+        self.log_text.clear()
+        self._log(f"Scanning: {root_folder}")
+        scan_result = scan_experiment_root(root_folder)
+        self._records = scan_result.records
+        self._populate_table()
+
+        if scan_result.errors:
+            for error in scan_result.errors:
+                self._log(f"ERROR: {error}")
+
+        ready_count = sum(1 for record in self._records if record.sort_ready)
+        self.status_label.setText(
+            f"Found {len(self._records)} experiments, {ready_count} ready for Sort + Binarize"
+        )
+        self.use_btn.setEnabled(bool(self._records))
+        self._log(self.status_label.text())
+
+    def _populate_table(self):
+        self.table.setRowCount(len(self._records))
+        for row, record in enumerate(self._records):
+            output_base = self._output_base_for_record(record)
+            values = [
+                record.experiment_id,
+                record.name,
+                str(Path(record.source_folder).name),
+                str(record.png_count),
+                record.status,
+                output_base,
+                record.issue_text,
+            ]
+
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if col == 0:
+                    item.setData(Qt.UserRole, row)
+                if col in {2, 5, 6}:
+                    item.setToolTip(value)
+                self.table.setItem(row, col, item)
+
+        if self._records:
+            self.table.selectRow(0)
+
+    def _refresh_output_base_column(self, *_args):
+        for row, record in enumerate(self._records):
+            output_base = self._output_base_for_record(record)
+            item = self.table.item(row, 5)
+            if item is None:
+                item = QTableWidgetItem()
+                self.table.setItem(row, 5, item)
+            item.setText(output_base)
+            item.setToolTip(output_base)
+
+    def _selected_record(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            return None
+
+        item = self.table.item(selected_rows[0].row(), 0)
+        if item is None:
+            return None
+
+        record_index = item.data(Qt.UserRole)
+        if record_index is None:
+            return None
+
+        return self._records[int(record_index)]
+
+    def _use_selected(self):
+        record = self._selected_record()
+        if record is None:
+            QMessageBox.warning(self, "Warning", "Select an experiment first.")
+            return
+
+        if not record.sort_ready:
+            QMessageBox.critical(
+                self,
+                "Experiment is not ready",
+                record.issue_text or "Experiment cannot be used for Sort + Binarize.",
+            )
+            return
+
+        output_base = self._output_base_for_record(record)
+        self.sort_tab.set_prepared_experiment(
+            input_folder=record.source_folder,
+            experiment_name=record.name,
+            output_base_folder=output_base,
+        )
+        self._log(f"Selected: {record.name}")
+        self._log(f"Input: {record.source_folder}")
+        self._log(f"Output base: {output_base}")
+
+        if self.tabs is not None:
+            self.tabs.setCurrentWidget(self.sort_tab)
+
+    def _output_base_for_record(self, record):
+        output_root = self.output_root_line.text().strip()
+        if not output_root:
+            root_folder = self.root_line.text().strip()
+            output_root = default_processed_root(root_folder) if root_folder else ""
+        return build_output_base_folder(output_root, record) if output_root else ""
+
+    def _log(self, text: str):
+        self.log_text.append(text)
+
+
+# ---------------------------------------------------------------------------
 # Tab 1: Sort + Binarize
 # ---------------------------------------------------------------------------
 class SortBinarizeTab(QWidget):
@@ -123,6 +305,7 @@ class SortBinarizeTab(QWidget):
         super().__init__(parent)
         self._worker = None
         self._executor = None
+        self._experiment_name = None
         self._init_ui()
 
     def _init_ui(self):
@@ -131,6 +314,14 @@ class SortBinarizeTab(QWidget):
         # Input folder
         folder_layout, self.input_line = _folder_row("Input folder:", self)
         layout.addLayout(folder_layout)
+
+        # Optional output base folder
+        output_layout, self.output_base_line = _folder_row("Output base:", self)
+        self.output_base_line.setPlaceholderText("Optional; defaults to <input>_cam_sorted")
+        layout.addLayout(output_layout)
+
+        self.experiment_label = QLabel("Experiment: -")
+        layout.addWidget(self.experiment_label)
 
         # Threshold
         h = QHBoxLayout()
@@ -172,6 +363,7 @@ class SortBinarizeTab(QWidget):
         # Connections
         self.run_btn.clicked.connect(self._run)
         self.cancel_btn.clicked.connect(self._cancel)
+        self.input_line.textEdited.connect(self._clear_prepared_experiment)
 
     def _run(self):
         folder = self.input_line.text().strip()
@@ -179,10 +371,13 @@ class SortBinarizeTab(QWidget):
             QMessageBox.warning(self, "Warning", "Select input folder.")
             return
 
+        output_base = self.output_base_line.text().strip()
         params = SortBinarizeParameters(
             input_folder=folder,
             threshold=self.threshold_spin.value(),
             validate_format=self.validate_cb.isChecked(),
+            output_base_folder=output_base or None,
+            experiment_name=self._experiment_name,
         )
 
         self._executor = SortBinarizeExecutor()
@@ -196,6 +391,10 @@ class SortBinarizeTab(QWidget):
         self.progress_bar.setValue(0)
         self._log(f"Starting Sort + Binarize...")
         self._log(f"  Input: {folder}")
+        if self._experiment_name:
+            self._log(f"  Experiment: {self._experiment_name}")
+        if output_base:
+            self._log(f"  Output base: {output_base}")
         self._log(f"  Threshold: {self.threshold_spin.value()}")
         self._log(f"  Validate: {self.validate_cb.isChecked()}")
         self._log("")
@@ -213,6 +412,22 @@ class SortBinarizeTab(QWidget):
 
     def _log(self, text: str):
         self.log_text.append(text)
+
+    def set_prepared_experiment(self, input_folder: str, experiment_name: str, output_base_folder: str):
+        self._experiment_name = experiment_name
+        self.input_line.setText(input_folder)
+        self.output_base_line.setText(output_base_folder)
+        self.experiment_label.setText(f"Experiment: {experiment_name}")
+        self.log_text.clear()
+        self._log("Prepared experiment selected.")
+        self._log(f"Input: {input_folder}")
+        self._log(f"Output base: {output_base_folder}")
+
+    def _clear_prepared_experiment(self, *_args):
+        if self._experiment_name:
+            self._experiment_name = None
+            self.output_base_line.clear()
+            self.experiment_label.setText("Experiment: -")
 
     def _on_progress(self, pct, msg):
         self.progress_bar.setValue(int(pct))
@@ -998,10 +1213,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ParticleAnalysis")
-        self.resize(700, 600)
+        self.resize(900, 650)
 
         tabs = QTabWidget()
-        tabs.addTab(SortBinarizeTab(), "Sort + Binarize")
+        self.sort_binarize_tab = SortBinarizeTab()
+        self.prepare_experiments_tab = PrepareExperimentsTab(self.sort_binarize_tab, tabs)
+        tabs.addTab(self.prepare_experiments_tab, "Prepare Experiments")
+        tabs.addTab(self.sort_binarize_tab, "Sort + Binarize")
         tabs.addTab(PTVAnalysisTab(), "PTV Analysis")
         tabs.addTab(PTVProcessingTab(), "PTV Processing")
         tabs.addTab(CoordinateTransformTab(), "Coordinate Transform")
