@@ -11,6 +11,7 @@ GUI приложение ParticleAnalysis на PyQt5.
 import sys
 import traceback
 from pathlib import Path
+import cv2
 
 # Добавление корня проекта в sys.path
 project_root = str(Path(__file__).parent.parent)
@@ -21,9 +22,11 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QProgressBar, QTextEdit, QGroupBox, QFileDialog, QMessageBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QDialog, QScrollArea, QSplitter
 )
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
+from PyQt5.QtGui import QImage, QPixmap
 
 from execute.execute_filter.execute_sort_binarize import (
     SortBinarizeExecutor, SortBinarizeParameters
@@ -36,6 +39,8 @@ from src.data_processing.experiment_preprocess import (
 from execute.execute_analysis.execute_ptv_analysis import (
     PTVExecutor, PTVParameters
 )
+from src.visualization.one_to_one_visualization import PTVVisualizer
+from src.visualization.ptv_viewer import scan_ptv_pairs
 from execute.execute_processing.vector_filter import (
     VectorFilterExecutor, VectorFilterParameters
 )
@@ -665,6 +670,299 @@ class PTVAnalysisTab(QWidget):
 # ---------------------------------------------------------------------------
 # Tab 3: PTV Processing (фильтрация, усреднение, визуализация)
 # ---------------------------------------------------------------------------
+def _bgr_to_pixmap(image):
+    if image is None:
+        return QPixmap()
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    h, w, ch = rgb.shape
+    bytes_per_line = ch * w
+    qimage = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+    return QPixmap.fromImage(qimage)
+
+
+class PTVPreviewDialog(QDialog):
+    def __init__(self, image_a, image_b, title: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(1200, 800)
+        self._pixmap_a = _bgr_to_pixmap(image_a)
+        self._pixmap_b = _bgr_to_pixmap(image_b)
+        self._scale = 0.25
+
+        layout = QVBoxLayout(self)
+        btn_layout = QHBoxLayout()
+        self.zoom_in_btn = QPushButton("Zoom +")
+        self.zoom_out_btn = QPushButton("Zoom -")
+        self.fit_btn = QPushButton("Fit")
+        btn_layout.addWidget(self.zoom_in_btn)
+        btn_layout.addWidget(self.zoom_out_btn)
+        btn_layout.addWidget(self.fit_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.label_a = QLabel()
+        self.label_b = QLabel()
+        self.label_a.setAlignment(Qt.AlignCenter)
+        self.label_b.setAlignment(Qt.AlignCenter)
+
+        scroll_a = QScrollArea()
+        scroll_b = QScrollArea()
+        scroll_a.setWidget(self.label_a)
+        scroll_b.setWidget(self.label_b)
+        scroll_a.setWidgetResizable(False)
+        scroll_b.setWidgetResizable(False)
+        splitter.addWidget(scroll_a)
+        splitter.addWidget(scroll_b)
+        layout.addWidget(splitter)
+
+        self.zoom_in_btn.clicked.connect(lambda: self._set_scale(self._scale * 1.25))
+        self.zoom_out_btn.clicked.connect(lambda: self._set_scale(self._scale / 1.25))
+        self.fit_btn.clicked.connect(lambda: self._set_scale(0.25))
+        self._update_images()
+
+    def _set_scale(self, scale: float):
+        self._scale = max(0.05, min(scale, 4.0))
+        self._update_images()
+
+    def _update_images(self):
+        for label, pixmap in ((self.label_a, self._pixmap_a), (self.label_b, self._pixmap_b)):
+            if pixmap.isNull():
+                label.setText("No image")
+                continue
+            size = pixmap.size() * self._scale
+            label.setPixmap(pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            label.resize(label.pixmap().size())
+
+
+class PTVViewerTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._records = []
+        self._visualizer = PTVVisualizer()
+        self._preview_images = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        ptv_layout, self.ptv_line = _folder_row("PTV folder:", self)
+        layout.addLayout(ptv_layout)
+
+        original_layout, self.original_line = _folder_row("Images folder:", self)
+        self.original_line.setPlaceholderText("Optional; inferred from PTV_<threshold>")
+        layout.addLayout(original_layout)
+
+        btn_layout = QHBoxLayout()
+        self.scan_btn = QPushButton("Scan")
+        self.preview_btn = QPushButton("Preview Selected")
+        self.open_btn = QPushButton("Open Large")
+        self.save_btn = QPushButton("Save Selected")
+        self.preview_btn.setEnabled(False)
+        self.open_btn.setEnabled(False)
+        self.save_btn.setEnabled(False)
+        btn_layout.addWidget(self.scan_btn)
+        btn_layout.addWidget(self.preview_btn)
+        btn_layout.addWidget(self.open_btn)
+        btn_layout.addWidget(self.save_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        self.status_label = QLabel("Ready")
+        layout.addWidget(self.status_label)
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.table = QTableWidget()
+        self.table.setColumnCount(9)
+        self.table.setHorizontalHeaderLabels([
+            "Camera", "Pair", "Matches", "Mean L", "Max L", "Mean dx", "Mean dy", "Source", "CSV"
+        ])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+        splitter.addWidget(self.table)
+
+        preview_panel = QWidget()
+        preview_layout = QVBoxLayout(preview_panel)
+        self.info_label = QLabel("Select a pair")
+        preview_layout.addWidget(self.info_label)
+
+        preview_splitter = QSplitter(Qt.Vertical)
+        self.preview_a = QLabel("Frame A")
+        self.preview_b = QLabel("Frame B")
+        self.preview_a.setAlignment(Qt.AlignCenter)
+        self.preview_b.setAlignment(Qt.AlignCenter)
+        preview_splitter.addWidget(self.preview_a)
+        preview_splitter.addWidget(self.preview_b)
+        preview_layout.addWidget(preview_splitter)
+        splitter.addWidget(preview_panel)
+        splitter.setSizes([520, 480])
+        layout.addWidget(splitter)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(100)
+        layout.addWidget(self.log_text)
+
+        self.scan_btn.clicked.connect(self._scan)
+        self.preview_btn.clicked.connect(self._preview_selected)
+        self.open_btn.clicked.connect(self._open_large)
+        self.save_btn.clicked.connect(self._save_selected)
+        self.table.itemSelectionChanged.connect(self._preview_selected)
+        self.table.itemDoubleClicked.connect(lambda _item: self._open_large())
+
+    def _scan(self):
+        ptv_folder = self.ptv_line.text().strip()
+        if not ptv_folder:
+            QMessageBox.warning(self, "Warning", "Select PTV result folder.")
+            return
+
+        self.log_text.clear()
+        self.status_label.setText("Scanning...")
+        self._preview_images = None
+        self._set_preview_labels(None)
+        self.info_label.setText("Select a pair")
+
+        result = scan_ptv_pairs(ptv_folder, self.original_line.text().strip() or None)
+        self._records = result.records
+        if result.original_folder and not self.original_line.text().strip():
+            self.original_line.setText(result.original_folder)
+
+        for error in result.errors:
+            self._log(f"Warning: {error}")
+
+        visualizer_ready = False
+        if result.original_folder:
+            original_ok = self._visualizer.set_original_folder(result.original_folder)
+            ptv_ok = self._visualizer.set_ptv_folder(ptv_folder) if original_ok else False
+            visualizer_ready = original_ok and ptv_ok
+            if not visualizer_ready:
+                self._log("Warning: Cannot initialize preview for selected folders.")
+        else:
+            self._log("Warning: Images folder was not found. Select it manually to enable previews.")
+
+        self._populate_table()
+
+        self.status_label.setText(f"Found {len(self._records)} pairs in {ptv_folder}")
+        self.preview_btn.setEnabled(bool(self._records) and visualizer_ready)
+        self.save_btn.setEnabled(bool(self._records) and visualizer_ready)
+        self.open_btn.setEnabled(self._preview_images is not None)
+        self._log(self.status_label.text())
+
+    def _populate_table(self):
+        self.table.blockSignals(True)
+        self.table.clearSelection()
+        self.table.setRowCount(len(self._records))
+        for row, record in enumerate(self._records):
+            values = [
+                record.camera,
+                str(record.pair_number),
+                str(record.matches_count),
+                f"{record.mean_l:.2f}",
+                f"{record.max_l:.2f}",
+                f"{record.mean_dx:.2f}",
+                f"{record.mean_dy:.2f}",
+                "OK" if record.source_ok else "Missing",
+                Path(record.csv_path).name,
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if col == 0:
+                    item.setData(Qt.UserRole, row)
+                if col == 8:
+                    item.setToolTip(record.csv_path)
+                self.table.setItem(row, col, item)
+        self.table.blockSignals(False)
+        if self._records:
+            self.table.selectRow(0)
+
+    def _selected_record(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            return None
+        item = self.table.item(selected_rows[0].row(), 0)
+        if item is None:
+            return None
+        record_index = item.data(Qt.UserRole)
+        return self._records[int(record_index)] if record_index is not None else None
+
+    def _preview_selected(self):
+        record = self._selected_record()
+        if record is None:
+            return
+        if not record.source_ok:
+            self.info_label.setText("Source images are missing")
+            self._set_preview_labels(None)
+            self.open_btn.setEnabled(False)
+            return
+
+        preview = self._visualizer.get_preview(record.camera, record.pair_number)
+        self._preview_images = preview
+        if preview is None:
+            self.info_label.setText("Preview failed")
+            self._set_preview_labels(None)
+            self.open_btn.setEnabled(False)
+            return
+
+        self.info_label.setText(
+            f"{record.camera}, pair {record.pair_number}: "
+            f"{record.matches_count} matches, mean L={record.mean_l:.2f}, max L={record.max_l:.2f}"
+        )
+        self._set_preview_labels(preview)
+        self.open_btn.setEnabled(True)
+
+    def _set_preview_labels(self, preview):
+        if preview is None:
+            self.preview_a.setPixmap(QPixmap())
+            self.preview_a.setText("Frame A")
+            self.preview_b.setPixmap(QPixmap())
+            self.preview_b.setText("Frame B")
+            return
+        for label, image in ((self.preview_a, preview[0]), (self.preview_b, preview[1])):
+            pixmap = _bgr_to_pixmap(image)
+            label.setPixmap(pixmap.scaled(460, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _open_large(self):
+        record = self._selected_record()
+        if record is None:
+            return
+        if self._preview_images is None:
+            self._preview_selected()
+        if self._preview_images is None:
+            QMessageBox.warning(self, "Warning", "No preview is available for this pair.")
+            return
+        dialog = PTVPreviewDialog(
+            self._preview_images[0],
+            self._preview_images[1],
+            f"{record.camera} pair {record.pair_number}",
+            self,
+        )
+        dialog.exec_()
+
+    def _save_selected(self):
+        record = self._selected_record()
+        if record is None:
+            QMessageBox.warning(self, "Warning", "Select a pair first.")
+            return
+        if not record.source_ok:
+            QMessageBox.warning(self, "Warning", "Source images are missing.")
+            return
+
+        result = self._visualizer.process_pair(record.camera, record.pair_number)
+        if result.get("success"):
+            self._log(
+                f"Saved {result.get('visualizations_created', 0)} images for "
+                f"{record.camera} pair {record.pair_number}"
+            )
+            self._log(f"Output: {self._visualizer.output_folder}")
+        else:
+            QMessageBox.warning(self, "Warning", "; ".join(result.get("errors", [])) or "Save failed.")
+
+    def _log(self, text: str):
+        self.log_text.append(text)
+
+
 class PTVProcessingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1270,6 +1568,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.prepare_experiments_tab, "Prepare Experiments")
         tabs.addTab(self.sort_binarize_tab, "Sort + Binarize")
         tabs.addTab(PTVAnalysisTab(), "PTV Analysis")
+        tabs.addTab(PTVViewerTab(), "PTV Results")
         tabs.addTab(PTVProcessingTab(), "PTV Processing")
         tabs.addTab(CoordinateTransformTab(), "Coordinate Transform")
         self.setCentralWidget(tabs)

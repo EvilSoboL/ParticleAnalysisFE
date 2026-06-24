@@ -245,10 +245,10 @@ class PTVVisualizer:
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f, delimiter=';')
 
-                for row in reader:
+                for idx, row in enumerate(reader, start=1):
                     try:
                         pair = MatchedPair(
-                            id=int(row['ID']),
+                            id=int(row['ID']) if row.get('ID') else idx,
                             x0=float(row['X0']),
                             y0=float(row['Y0']),
                             dx=float(row['dx']),
