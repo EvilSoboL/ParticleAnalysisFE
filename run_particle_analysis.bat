@@ -45,11 +45,32 @@ echo Using Python: %PYTHON_EXE% %PYTHON_ARGS%
 if errorlevel 1 (
     echo.
     echo Missing required packages.
-    echo Run this command from the project folder:
+    echo The launcher can install them now with:
     echo "%PYTHON_EXE%" %PYTHON_ARGS% -m pip install -r requirements.txt
     echo.
-    pause
-    exit /b 1
+    choice /C YN /M "Install dependencies now"
+    if errorlevel 2 (
+        echo.
+        echo Installation skipped.
+        pause
+        exit /b 1
+    )
+
+    "%PYTHON_EXE%" %PYTHON_ARGS% -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo.
+        echo Dependency installation failed.
+        pause
+        exit /b 1
+    )
+
+    "%PYTHON_EXE%" %PYTHON_ARGS% -c "import PyQt5, cv2, numpy" >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo Dependencies are still missing after installation.
+        pause
+        exit /b 1
+    )
 )
 
 "%PYTHON_EXE%" %PYTHON_ARGS% "%APP_DIR%gui\main_window.py"
