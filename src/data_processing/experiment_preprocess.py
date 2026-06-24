@@ -35,11 +35,14 @@ class ExperimentRecord:
     data_link: str = ""
     png_count: int = 0
     sort_ready: bool = False
+    skipped: bool = False
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
+        if self.skipped:
+            return "Skipped"
         if self.errors:
             return "Error"
         if self.warnings:

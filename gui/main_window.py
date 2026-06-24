@@ -130,6 +130,7 @@ class PrepareExperimentsTab(QWidget):
         self.sort_tab = sort_tab
         self.tabs = tabs
         self._records = []
+        self._updating_table = False
         self._init_ui()
 
     def _init_ui(self):
@@ -155,17 +156,17 @@ class PrepareExperimentsTab(QWidget):
         layout.addWidget(self.status_label)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
-            "ID", "Experiment name", "Source folder", "PNG", "Status", "Output base", "Issues"
+            "Skip", "ID", "Experiment name", "Source folder", "PNG", "Status", "Output base", "Issues"
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(6, QHeaderView.Stretch)
+        header.setSectionResizeMode(7, QHeaderView.Stretch)
         layout.addWidget(self.table)
 
         self.log_text = QTextEdit()
@@ -175,7 +176,8 @@ class PrepareExperimentsTab(QWidget):
 
         self.scan_btn.clicked.connect(self._scan)
         self.use_btn.clicked.connect(self._use_selected)
-        self.table.itemDoubleClicked.connect(lambda _item: self._use_selected())
+        self.table.itemDoubleClicked.connect(self._on_table_item_double_clicked)
+        self.table.itemChanged.connect(self._on_table_item_changed)
         self.root_line.textEdited.connect(self._on_root_edited)
         self.output_root_line.textEdited.connect(self._refresh_output_base_column)
 
@@ -202,17 +204,23 @@ class PrepareExperimentsTab(QWidget):
             for error in scan_result.errors:
                 self._log(f"ERROR: {error}")
 
-        ready_count = sum(1 for record in self._records if record.sort_ready)
-        self.status_label.setText(
-            f"Found {len(self._records)} experiments, {ready_count} ready for Sort + Binarize"
-        )
+        self._update_status_label()
         self.use_btn.setEnabled(bool(self._records))
         self._log(self.status_label.text())
 
     def _populate_table(self):
+        self._updating_table = True
         self.table.setRowCount(len(self._records))
         for row, record in enumerate(self._records):
             output_base = self._output_base_for_record(record)
+
+            skip_item = QTableWidgetItem()
+            skip_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            skip_item.setCheckState(Qt.Checked if record.skipped else Qt.Unchecked)
+            skip_item.setData(Qt.UserRole, row)
+            skip_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 0, skip_item)
+
             values = [
                 record.experiment_id,
                 record.name,
@@ -225,31 +233,64 @@ class PrepareExperimentsTab(QWidget):
 
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if col == 0:
+                table_col = col + 1
+                if table_col == 1:
                     item.setData(Qt.UserRole, row)
-                if col in {2, 5, 6}:
+                if table_col in {3, 6, 7}:
                     item.setToolTip(value)
-                self.table.setItem(row, col, item)
+                self.table.setItem(row, table_col, item)
 
         if self._records:
             self.table.selectRow(0)
+        self._updating_table = False
+
+    def _on_table_item_changed(self, item):
+        if self._updating_table or item.column() != 0:
+            return
+
+        record_index = item.data(Qt.UserRole)
+        if record_index is None:
+            return
+
+        record = self._records[int(record_index)]
+        record.skipped = item.checkState() == Qt.Checked
+        self._set_status_cell(item.row(), record.status)
+        self._update_status_label()
+
+    def _on_table_item_double_clicked(self, item):
+        if item.column() != 0:
+            self._use_selected()
+
+    def _set_status_cell(self, row: int, status: str):
+        item = self.table.item(row, 5)
+        if item is None:
+            item = QTableWidgetItem()
+            self.table.setItem(row, 5, item)
+        item.setText(status)
 
     def _refresh_output_base_column(self, *_args):
         for row, record in enumerate(self._records):
             output_base = self._output_base_for_record(record)
-            item = self.table.item(row, 5)
+            item = self.table.item(row, 6)
             if item is None:
                 item = QTableWidgetItem()
-                self.table.setItem(row, 5, item)
+                self.table.setItem(row, 6, item)
             item.setText(output_base)
             item.setToolTip(output_base)
+
+    def _update_status_label(self):
+        ready_count = sum(1 for record in self._records if record.sort_ready and not record.skipped)
+        skipped_count = sum(1 for record in self._records if record.skipped)
+        self.status_label.setText(
+            f"Found {len(self._records)} experiments, {ready_count} ready, {skipped_count} skipped"
+        )
 
     def _selected_record(self):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
             return None
 
-        item = self.table.item(selected_rows[0].row(), 0)
+        item = self.table.item(selected_rows[0].row(), 1)
         if item is None:
             return None
 
@@ -263,6 +304,14 @@ class PrepareExperimentsTab(QWidget):
         record = self._selected_record()
         if record is None:
             QMessageBox.warning(self, "Warning", "Select an experiment first.")
+            return
+
+        if record.skipped:
+            QMessageBox.warning(
+                self,
+                "Experiment skipped",
+                "This experiment is marked as skipped and will not be used for Sort + Binarize.",
+            )
             return
 
         if not record.sort_ready:
