@@ -681,12 +681,11 @@ def _bgr_to_pixmap(image):
 
 
 class PTVPreviewDialog(QDialog):
-    def __init__(self, image_a, image_b, title: str, parent=None):
+    def __init__(self, image, title: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(1200, 800)
-        self._pixmap_a = _bgr_to_pixmap(image_a)
-        self._pixmap_b = _bgr_to_pixmap(image_b)
+        self._pixmap = _bgr_to_pixmap(image)
         self._scale = 0.25
 
         layout = QVBoxLayout(self)
@@ -700,21 +699,13 @@ class PTVPreviewDialog(QDialog):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        splitter = QSplitter(Qt.Horizontal)
-        self.label_a = QLabel()
-        self.label_b = QLabel()
-        self.label_a.setAlignment(Qt.AlignCenter)
-        self.label_b.setAlignment(Qt.AlignCenter)
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
 
-        scroll_a = QScrollArea()
-        scroll_b = QScrollArea()
-        scroll_a.setWidget(self.label_a)
-        scroll_b.setWidget(self.label_b)
-        scroll_a.setWidgetResizable(False)
-        scroll_b.setWidgetResizable(False)
-        splitter.addWidget(scroll_a)
-        splitter.addWidget(scroll_b)
-        layout.addWidget(splitter)
+        scroll = QScrollArea()
+        scroll.setWidget(self.image_label)
+        scroll.setWidgetResizable(False)
+        layout.addWidget(scroll)
 
         self.zoom_in_btn.clicked.connect(lambda: self._set_scale(self._scale * 1.25))
         self.zoom_out_btn.clicked.connect(lambda: self._set_scale(self._scale / 1.25))
@@ -726,13 +717,12 @@ class PTVPreviewDialog(QDialog):
         self._update_images()
 
     def _update_images(self):
-        for label, pixmap in ((self.label_a, self._pixmap_a), (self.label_b, self._pixmap_b)):
-            if pixmap.isNull():
-                label.setText("No image")
-                continue
-            size = pixmap.size() * self._scale
-            label.setPixmap(pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            label.resize(label.pixmap().size())
+        if self._pixmap.isNull():
+            self.image_label.setText("No image")
+            return
+        size = self._pixmap.size() * self._scale
+        self.image_label.setPixmap(self._pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.image_label.resize(self.image_label.pixmap().size())
 
 
 class PTVViewerTab(QWidget):
@@ -740,7 +730,7 @@ class PTVViewerTab(QWidget):
         super().__init__(parent)
         self._records = []
         self._visualizer = PTVVisualizer()
-        self._preview_images = None
+        self._preview_image = None
         self._init_ui()
 
     def _init_ui(self):
@@ -788,14 +778,9 @@ class PTVViewerTab(QWidget):
         self.info_label = QLabel("Select a pair")
         preview_layout.addWidget(self.info_label)
 
-        preview_splitter = QSplitter(Qt.Vertical)
-        self.preview_a = QLabel("Frame A")
-        self.preview_b = QLabel("Frame B")
-        self.preview_a.setAlignment(Qt.AlignCenter)
-        self.preview_b.setAlignment(Qt.AlignCenter)
-        preview_splitter.addWidget(self.preview_a)
-        preview_splitter.addWidget(self.preview_b)
-        preview_layout.addWidget(preview_splitter)
+        self.preview_image = QLabel("Preview")
+        self.preview_image.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(self.preview_image)
         splitter.addWidget(preview_panel)
         splitter.setSizes([520, 480])
         layout.addWidget(splitter)
@@ -820,7 +805,7 @@ class PTVViewerTab(QWidget):
 
         self.log_text.clear()
         self.status_label.setText("Scanning...")
-        self._preview_images = None
+        self._preview_image = None
         self._set_preview_labels(None)
         self.info_label.setText("Select a pair")
 
@@ -847,7 +832,7 @@ class PTVViewerTab(QWidget):
         self.status_label.setText(f"Found {len(self._records)} pairs in {ptv_folder}")
         self.preview_btn.setEnabled(bool(self._records) and visualizer_ready)
         self.save_btn.setEnabled(bool(self._records) and visualizer_ready)
-        self.open_btn.setEnabled(self._preview_images is not None)
+        self.open_btn.setEnabled(self._preview_image is not None)
         self._log(self.status_label.text())
 
     def _populate_table(self):
@@ -897,8 +882,8 @@ class PTVViewerTab(QWidget):
             self.open_btn.setEnabled(False)
             return
 
-        preview = self._visualizer.get_preview(record.camera, record.pair_number)
-        self._preview_images = preview
+        preview = self._visualizer.get_preview_image(record.camera, record.pair_number)
+        self._preview_image = preview
         if preview is None:
             self.info_label.setText("Preview failed")
             self._set_preview_labels(None)
@@ -914,27 +899,23 @@ class PTVViewerTab(QWidget):
 
     def _set_preview_labels(self, preview):
         if preview is None:
-            self.preview_a.setPixmap(QPixmap())
-            self.preview_a.setText("Frame A")
-            self.preview_b.setPixmap(QPixmap())
-            self.preview_b.setText("Frame B")
+            self.preview_image.setPixmap(QPixmap())
+            self.preview_image.setText("Preview")
             return
-        for label, image in ((self.preview_a, preview[0]), (self.preview_b, preview[1])):
-            pixmap = _bgr_to_pixmap(image)
-            label.setPixmap(pixmap.scaled(460, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        pixmap = _bgr_to_pixmap(preview)
+        self.preview_image.setPixmap(pixmap.scaled(520, 520, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _open_large(self):
         record = self._selected_record()
         if record is None:
             return
-        if self._preview_images is None:
+        if self._preview_image is None:
             self._preview_selected()
-        if self._preview_images is None:
+        if self._preview_image is None:
             QMessageBox.warning(self, "Warning", "No preview is available for this pair.")
             return
         dialog = PTVPreviewDialog(
-            self._preview_images[0],
-            self._preview_images[1],
+            self._preview_image,
             f"{record.camera} pair {record.pair_number}",
             self,
         )
@@ -949,13 +930,13 @@ class PTVViewerTab(QWidget):
             QMessageBox.warning(self, "Warning", "Source images are missing.")
             return
 
-        result = self._visualizer.process_pair(record.camera, record.pair_number)
+        result = self._visualizer.process_pair_on_first_frame(record.camera, record.pair_number)
         if result.get("success"):
             self._log(
                 f"Saved {result.get('visualizations_created', 0)} images for "
                 f"{record.camera} pair {record.pair_number}"
             )
-            self._log(f"Output: {self._visualizer.output_folder}")
+            self._log(f"Output: {result.get('output_file') or self._visualizer.output_folder}")
         else:
             QMessageBox.warning(self, "Warning", "; ".join(result.get("errors", [])) or "Save failed.")
 

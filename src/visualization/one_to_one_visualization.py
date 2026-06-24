@@ -319,7 +319,59 @@ class PTVVisualizer:
             if 0 <= x < w and 0 <= y < h:
                 cv2.circle(vis_image, (x, y), radius, cfg.particle_b_color, 1)
 
+        self._draw_legend(vis_image)
         return vis_image
+
+    def _draw_legend(self, image: np.ndarray) -> None:
+        """Draw color legend in the top-left corner."""
+        cfg = self.config
+        h, w = image.shape[:2]
+        margin = max(12, int(min(w, h) * 0.006))
+        font_scale = max(0.65, min(1.15, min(w, h) / 2800.0))
+        thickness = max(1, int(round(font_scale * 2)))
+        row_h = int(30 * font_scale) + 12
+        sample_x = margin + 18
+        text_x = margin + 50
+        y0 = margin + 30
+
+        items = [
+            ("Frame A particles", cfg.particle_a_color, "circle"),
+            ("Frame B positions", cfg.particle_b_color, "circle"),
+            ("Displacement vector", cfg.line_color, "line"),
+        ]
+        text_sizes = [
+            cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+            for label, _color, _kind in items
+        ]
+        box_w = max(size[0] for size in text_sizes) + 85
+        box_h = row_h * len(items) + 22
+
+        overlay = image.copy()
+        cv2.rectangle(
+            overlay,
+            (margin, margin),
+            (min(w - 1, margin + box_w), min(h - 1, margin + box_h)),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.addWeighted(overlay, 0.55, image, 0.45, 0, image)
+
+        for idx, (label, color, kind) in enumerate(items):
+            y = y0 + idx * row_h
+            if kind == "line":
+                cv2.line(image, (sample_x - 10, y - 6), (sample_x + 20, y + 6), color, thickness + 1)
+            else:
+                cv2.circle(image, (sample_x + 5, y), max(5, int(7 * font_scale)), color, thickness)
+            cv2.putText(
+                image,
+                label,
+                (text_x, y + 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
 
     def _save_visualization(self, image: np.ndarray, output_path: Path) -> bool:
         """
@@ -415,6 +467,57 @@ class PTVVisualizer:
             result['errors'].append(f"Не найден файл: {original_b_path.name}")
 
         result['success'] = result['visualizations_created'] > 0
+        return result
+
+    def process_pair_on_first_frame(self, camera_name: str, pair_number: int) -> Dict:
+        """Save one combined visualization on the first frame of the pair."""
+        result = {
+            'success': False,
+            'pair_number': pair_number,
+            'camera': camera_name,
+            'pairs_count': 0,
+            'visualizations_created': 0,
+            'errors': []
+        }
+
+        if self.original_folder is None or self.ptv_folder is None or self.output_folder is None:
+            result['errors'].append("Folders are not set")
+            return result
+
+        original_cam = self.original_folder / camera_name
+        pairs_folder = self.ptv_folder / f"{camera_name}_pairs"
+        output_cam = self.output_folder / camera_name
+        original_a_path = original_cam / f"{pair_number}_a.png"
+        pairs_csv_path = pairs_folder / f"{pair_number}_pair.csv"
+
+        if not pairs_csv_path.exists():
+            result['errors'].append(f"File not found: {pairs_csv_path.name}")
+            return result
+
+        pairs = self._load_pairs_csv(pairs_csv_path)
+        result['pairs_count'] = len(pairs)
+        if not pairs:
+            result['errors'].append(f"No data in {pairs_csv_path.name}")
+            return result
+
+        if not original_a_path.exists():
+            result['errors'].append(f"File not found: {original_a_path.name}")
+            return result
+
+        original_a = self._load_original_image(original_a_path)
+        if original_a is None:
+            result['errors'].append(f"Cannot load {original_a_path.name}")
+            return result
+
+        vis = self.create_visualization(original_a, pairs)
+        output_path = output_cam / f"{pair_number}_vis.png"
+        if self._save_visualization(vis, output_path):
+            result['visualizations_created'] = 1
+            result['success'] = True
+            result['output_file'] = str(output_path)
+        else:
+            result['errors'].append(f"Cannot save {output_path}")
+
         return result
 
     def process_camera(self, camera_name: str) -> Tuple[int, int, List[str]]:
@@ -617,6 +720,28 @@ class PTVVisualizer:
         vis_b = self.create_visualization(original_b, pairs)
 
         return vis_a, vis_b
+
+    def get_preview_image(self, camera_name: str, pair_number: int) -> Optional[np.ndarray]:
+        """Return one combined preview drawn on the first frame."""
+        if self.original_folder is None or self.ptv_folder is None:
+            return None
+
+        original_cam = self.original_folder / camera_name
+        pairs_folder = self.ptv_folder / f"{camera_name}_pairs"
+
+        pairs_csv_path = pairs_folder / f"{pair_number}_pair.csv"
+        if not pairs_csv_path.exists():
+            return None
+
+        pairs = self._load_pairs_csv(pairs_csv_path)
+        if not pairs:
+            return None
+
+        original_a = self._load_original_image(original_cam / f"{pair_number}_a.png")
+        if original_a is None:
+            return None
+
+        return self.create_visualization(original_a, pairs)
 
     def get_pair_statistics(self, camera_name: str, pair_number: int) -> Optional[Dict]:
         """
