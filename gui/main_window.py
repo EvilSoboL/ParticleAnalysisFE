@@ -95,6 +95,18 @@ def _experiment_issue_text(record) -> str:
     return "; ".join(_translate_experiment_message(item) for item in record.errors + record.warnings)
 
 
+def _set_tooltip(text: str, *widgets) -> None:
+    for widget in widgets:
+        widget.setToolTip(text)
+
+
+def _set_header_tooltips(table: QTableWidget, tooltips: dict[int, str]) -> None:
+    for column, tooltip in tooltips.items():
+        item = table.horizontalHeaderItem(column)
+        if item is not None:
+            item.setToolTip(tooltip)
+
+
 # ---------------------------------------------------------------------------
 # WorkerThread
 # ---------------------------------------------------------------------------
@@ -420,11 +432,19 @@ class SortBinarizeTab(QWidget):
 
         # Threshold
         h = QHBoxLayout()
-        h.addWidget(QLabel("Порог:"))
+        threshold_label = QLabel("Порог:")
+        h.addWidget(threshold_label)
         self.threshold_spin = QSpinBox()
         self.threshold_spin.setRange(0, 65535)
         self.threshold_spin.setValue(2000)
         self.threshold_spin.setSingleStep(100)
+        _set_tooltip(
+            "Порог бинаризации для 16-bit PNG.\n"
+            "Единицы: уровень яркости пикселя, диапазон 0..65535.\n"
+            "Пиксели со значением >= порога станут белыми (255), остальные черными (0).",
+            threshold_label,
+            self.threshold_spin,
+        )
         h.addWidget(self.threshold_spin)
         h.addStretch()
         layout.addLayout(h)
@@ -432,6 +452,10 @@ class SortBinarizeTab(QWidget):
         # Validate format
         self.validate_cb = QCheckBox("Проверять формат (16-bit PNG)")
         self.validate_cb.setChecked(True)
+        self.validate_cb.setToolTip(
+            "Проверяет, что входные изображения являются 16-bit PNG.\n"
+            "Это важно: порог 0..65535 рассчитан именно на 16-битную яркость."
+        )
         layout.addWidget(self.validate_cb)
 
         # Run / Cancel
@@ -572,18 +596,36 @@ class PTVAnalysisTab(QWidget):
 
         # Detection parameters
         det_group = QGroupBox("Параметры детекции")
+        det_group.setToolTip(
+            "Параметры поиска частиц на бинаризованных изображениях.\n"
+            "Площадь измеряется в пикселях квадратных (px^2)."
+        )
         det_layout = QVBoxLayout(det_group)
 
         h1 = QHBoxLayout()
-        h1.addWidget(QLabel("min_area:"))
+        min_area_label = QLabel("min_area:")
+        h1.addWidget(min_area_label)
         self.min_area_spin = QSpinBox()
         self.min_area_spin.setRange(1, 1000)
         self.min_area_spin.setValue(4)
+        _set_tooltip(
+            "Минимальная площадь связанной белой области, которая считается частицей.\n"
+            "Единицы: px^2. Области меньше этого значения отбрасываются как шум.",
+            min_area_label,
+            self.min_area_spin,
+        )
         h1.addWidget(self.min_area_spin)
-        h1.addWidget(QLabel("max_area:"))
+        max_area_label = QLabel("max_area:")
+        h1.addWidget(max_area_label)
         self.max_area_spin = QSpinBox()
         self.max_area_spin.setRange(1, 1000)
         self.max_area_spin.setValue(150)
+        _set_tooltip(
+            "Максимальная площадь связанной белой области, которая считается частицей.\n"
+            "Единицы: px^2. Более крупные области отбрасываются как слипшиеся частицы или артефакты.",
+            max_area_label,
+            self.max_area_spin,
+        )
         h1.addWidget(self.max_area_spin)
         h1.addStretch()
         det_layout.addLayout(h1)
@@ -591,18 +633,36 @@ class PTVAnalysisTab(QWidget):
 
         # Matching parameters
         match_group = QGroupBox("Параметры сопоставления")
+        match_group.setToolTip(
+            "Параметры сопоставления частиц между двумя последовательными кадрами.\n"
+            "Координаты и расстояния здесь измеряются в пикселях."
+        )
         match_layout = QVBoxLayout(match_group)
 
         h2 = QHBoxLayout()
-        h2.addWidget(QLabel("max_distance:"))
+        max_dist_label = QLabel("max_distance:")
+        h2.addWidget(max_dist_label)
         self.max_dist_spin = QDoubleSpinBox()
         self.max_dist_spin.setRange(1.0, 100.0)
         self.max_dist_spin.setValue(50.0)
+        _set_tooltip(
+            "Максимальный радиус поиска пары для частицы из кадра A в кадре B.\n"
+            "Единицы: px. Большее значение допускает быстрые смещения, но повышает риск ложных пар.",
+            max_dist_label,
+            self.max_dist_spin,
+        )
         h2.addWidget(self.max_dist_spin)
-        h2.addWidget(QLabel("max_diameter_diff:"))
+        max_diam_label = QLabel("max_diameter_diff:")
+        h2.addWidget(max_diam_label)
         self.max_diam_spin = QDoubleSpinBox()
         self.max_diam_spin.setRange(0.0, 10.0)
         self.max_diam_spin.setValue(4.0)
+        _set_tooltip(
+            "Максимальная допустимая разница эквивалентных диаметров пары частиц.\n"
+            "Единицы: px. Диаметр считается как 2 * sqrt(area / pi).",
+            max_diam_label,
+            self.max_diam_spin,
+        )
         h2.addWidget(self.max_diam_spin)
         h2.addStretch()
         match_layout.addLayout(h2)
@@ -1052,6 +1112,19 @@ class PTVViewerTab(QWidget):
             "Камера", "Пара", "Совпадений", "Средн. L", "Макс. L",
             "Средн. dx", "Средн. dy", "Кадры", "CSV"
         ])
+        self.table.setToolTip(
+            "Сводка по CSV файлам PTV анализа.\n"
+            "dx, dy и L здесь измеряются в пикселях между кадром A и кадром B."
+        )
+        _set_header_tooltips(self.table, {
+            2: "Количество сопоставленных частиц в выбранной паре кадров.",
+            3: "Средняя длина вектора смещения L = sqrt(dx^2 + dy^2). Единицы: px.",
+            4: "Максимальная длина вектора смещения L в этой паре. Единицы: px.",
+            5: "Средняя горизонтальная компонента смещения: X_B - X_A. Единицы: px.",
+            6: "Средняя вертикальная компонента смещения: Y_B - Y_A. Единицы: px.",
+            7: "Наличие исходных кадров A/B для визуального предпросмотра пары.",
+            8: "CSV файл с колонками X0, Y0, dx, dy, L, Diameter, Area.",
+        })
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1387,27 +1460,43 @@ class PTVProcessingTab(QWidget):
 
         # --- 3a. Vector Filter ---
         filt_group = QGroupBox("1. Фильтр векторов")
+        filt_group.setToolTip(
+            "Фильтрует векторы из pair_sum CSV по компонентам смещения.\n"
+            "Для обычных PTV результатов U/dx и V/dy измеряются в пикселях между кадрами."
+        )
         filt_layout = QVBoxLayout(filt_group)
 
         f_cam1_row, self.filt_cam1_file_line = _file_row("cam_1 CSV:", self)
         filt_layout.addLayout(f_cam1_row)
         f_cam2_row, self.filt_cam2_file_line = _file_row("cam_2 CSV:", self)
         filt_layout.addLayout(f_cam2_row)
+        _set_tooltip(
+            "CSV файл pair_sum для камеры.\n"
+            "Ожидаются колонки X0, Y0, dx, dy, L, Diameter, Area.",
+            self.filt_cam1_file_line,
+            self.filt_cam2_file_line,
+        )
 
         # U range
         h_u = QHBoxLayout()
         self.filter_u_cb = QCheckBox("Фильтр U")
         self.filter_u_cb.setChecked(True)
+        self.filter_u_cb.setToolTip(
+            "Включает фильтр по горизонтальной компоненте вектора.\n"
+            "U обычно соответствует колонке dx. Единицы как в CSV; для pair_sum это px."
+        )
         h_u.addWidget(self.filter_u_cb)
         h_u.addWidget(QLabel("min:"))
         self.u_min_spin = QDoubleSpinBox()
         self.u_min_spin.setRange(-10000.0, 10000.0)
         self.u_min_spin.setValue(0.0)
+        _set_tooltip("Нижняя граница допустимого U/dx. Единицы как в CSV; для pair_sum это px.", self.u_min_spin)
         h_u.addWidget(self.u_min_spin)
         h_u.addWidget(QLabel("max:"))
         self.u_max_spin = QDoubleSpinBox()
         self.u_max_spin.setRange(-10000.0, 10000.0)
         self.u_max_spin.setValue(40.0)
+        _set_tooltip("Верхняя граница допустимого U/dx. Единицы как в CSV; для pair_sum это px.", self.u_max_spin)
         h_u.addWidget(self.u_max_spin)
         h_u.addStretch()
         filt_layout.addLayout(h_u)
@@ -1416,16 +1505,22 @@ class PTVProcessingTab(QWidget):
         h_v = QHBoxLayout()
         self.filter_v_cb = QCheckBox("Фильтр V")
         self.filter_v_cb.setChecked(True)
+        self.filter_v_cb.setToolTip(
+            "Включает фильтр по вертикальной компоненте вектора.\n"
+            "V обычно соответствует колонке dy. Единицы как в CSV; для pair_sum это px."
+        )
         h_v.addWidget(self.filter_v_cb)
         h_v.addWidget(QLabel("min:"))
         self.v_min_spin = QDoubleSpinBox()
         self.v_min_spin.setRange(-10000.0, 10000.0)
         self.v_min_spin.setValue(-10.0)
+        _set_tooltip("Нижняя граница допустимого V/dy. Единицы как в CSV; для pair_sum это px.", self.v_min_spin)
         h_v.addWidget(self.v_min_spin)
         h_v.addWidget(QLabel("max:"))
         self.v_max_spin = QDoubleSpinBox()
         self.v_max_spin.setRange(-10000.0, 10000.0)
         self.v_max_spin.setValue(10.0)
+        _set_tooltip("Верхняя граница допустимого V/dy. Единицы как в CSV; для pair_sum это px.", self.v_max_spin)
         h_v.addWidget(self.v_max_spin)
         h_v.addStretch()
         filt_layout.addLayout(h_v)
@@ -1434,6 +1529,10 @@ class PTVProcessingTab(QWidget):
 
         # --- 3b. Vector Average ---
         avg_group = QGroupBox("2. Усреднение векторов")
+        avg_group.setToolTip(
+            "Разбивает поле на регулярную сетку и усредняет векторы внутри каждой ячейки.\n"
+            "Размеры задаются в единицах координат входного CSV; для pair_sum это px."
+        )
         avg_layout = QVBoxLayout(avg_group)
 
         h_plane = QHBoxLayout()
@@ -1442,12 +1541,14 @@ class PTVProcessingTab(QWidget):
         self.plane_w_spin.setRange(1.0, 100000.0)
         self.plane_w_spin.setValue(4904.0)
         self.plane_w_spin.setDecimals(1)
+        _set_tooltip("Ширина расчетной области. Единицы как X/Y во входном CSV; для pair_sum это px.", self.plane_w_spin)
         h_plane.addWidget(self.plane_w_spin)
         h_plane.addWidget(QLabel("plane_height:"))
         self.plane_h_spin = QDoubleSpinBox()
         self.plane_h_spin.setRange(1.0, 100000.0)
         self.plane_h_spin.setValue(3280.0)
         self.plane_h_spin.setDecimals(1)
+        _set_tooltip("Высота расчетной области. Единицы как X/Y во входном CSV; для pair_sum это px.", self.plane_h_spin)
         h_plane.addWidget(self.plane_h_spin)
         h_plane.addStretch()
         avg_layout.addLayout(h_plane)
@@ -1458,17 +1559,23 @@ class PTVProcessingTab(QWidget):
         self.cell_w_spin.setRange(1.0, 10000.0)
         self.cell_w_spin.setValue(66.0)
         self.cell_w_spin.setDecimals(1)
+        _set_tooltip("Ширина одной ячейки усреднения. Единицы как X/Y во входном CSV; для pair_sum это px.", self.cell_w_spin)
         h_cell.addWidget(self.cell_w_spin)
         h_cell.addWidget(QLabel("cell_height:"))
         self.cell_h_spin = QDoubleSpinBox()
         self.cell_h_spin.setRange(1.0, 10000.0)
         self.cell_h_spin.setValue(66.0)
         self.cell_h_spin.setDecimals(1)
+        _set_tooltip("Высота одной ячейки усреднения. Единицы как X/Y во входном CSV; для pair_sum это px.", self.cell_h_spin)
         h_cell.addWidget(self.cell_h_spin)
         h_cell.addWidget(QLabel("min_points:"))
         self.min_pts_spin = QSpinBox()
         self.min_pts_spin.setRange(1, 1000)
         self.min_pts_spin.setValue(1)
+        self.min_pts_spin.setToolTip(
+            "Минимальное число векторов в ячейке, чтобы записать ее в результат.\n"
+            "Ячейки с меньшим числом точек считаются недостаточно надежными и пропускаются."
+        )
         h_cell.addWidget(self.min_pts_spin)
         h_cell.addStretch()
         avg_layout.addLayout(h_cell)
@@ -1478,6 +1585,10 @@ class PTVProcessingTab(QWidget):
         layout.addWidget(avg_group)
 
         result_group = QGroupBox("Результаты обработки")
+        result_group.setToolTip(
+            "Показывает сохраненные исходники каждого этапа и краткую статистику обработки.\n"
+            "Полные пути к CSV видны при наведении на имена файлов."
+        )
         result_layout = QVBoxLayout(result_group)
         self.processing_results_table = QTableWidget()
         self.processing_results_table.setColumnCount(8)
@@ -1485,6 +1596,15 @@ class PTVProcessingTab(QWidget):
             "Камера", "pair_sum", "После фильтра", "После усреднения",
             "Вход", "После фильтра", "Удалено %", "Ячейки"
         ])
+        _set_header_tooltips(self.processing_results_table, {
+            1: "Копия исходного pair_sum CSV, сохраненная в папке запуска.",
+            2: "CSV после удаления векторов, не прошедших фильтры U/V.",
+            3: "CSV после усреднения прошедших фильтр векторов по ячейкам сетки.",
+            4: "Количество векторов во входном pair_sum CSV.",
+            5: "Количество векторов, оставшихся после фильтра.",
+            6: "Доля удаленных векторов относительно входного CSV, в процентах.",
+            7: "Количество непустых ячеек, записанных после усреднения.",
+        })
         self.processing_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.processing_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.processing_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -1495,9 +1615,14 @@ class PTVProcessingTab(QWidget):
 
         # --- 3c. Vector Plot ---
         plot_group = QGroupBox("3. Визуализация векторов")
+        plot_group.setToolTip(
+            "Строит PNG с векторным полем по выбранному CSV.\n"
+            "Единицы осей и векторов берутся из колонок выбранного файла."
+        )
         plot_layout = QVBoxLayout(plot_group)
 
         p_row, self.plot_file_line = _file_row("Входной CSV:", self)
+        self.plot_file_line.setToolTip("CSV для построения графика: обычно файл после усреднения.")
         plot_layout.addLayout(p_row)
 
         h_plot1 = QHBoxLayout()
@@ -1506,6 +1631,10 @@ class PTVProcessingTab(QWidget):
         self.arrow_scale_spin.setRange(0.01, 1000.0)
         self.arrow_scale_spin.setValue(20.0)
         self.arrow_scale_spin.setDecimals(2)
+        self.arrow_scale_spin.setToolTip(
+            "Масштаб стрелок на графике Matplotlib.\n"
+            "Чем меньше значение, тем длиннее визуальные стрелки; физические данные не меняются."
+        )
         h_plot1.addWidget(self.arrow_scale_spin)
         h_plot1.addWidget(QLabel("arrow_width:"))
         self.arrow_width_spin = QDoubleSpinBox()
@@ -1513,6 +1642,10 @@ class PTVProcessingTab(QWidget):
         self.arrow_width_spin.setValue(0.003)
         self.arrow_width_spin.setSingleStep(0.001)
         self.arrow_width_spin.setDecimals(3)
+        self.arrow_width_spin.setToolTip(
+            "Толщина стрелок на итоговом графике.\n"
+            "Это только визуальная настройка, без единиц измерения."
+        )
         h_plot1.addWidget(self.arrow_width_spin)
         h_plot1.addStretch()
         plot_layout.addLayout(h_plot1)
@@ -1524,10 +1657,15 @@ class PTVProcessingTab(QWidget):
             "jet", "viridis", "plasma", "inferno", "magma", "cividis",
             "coolwarm", "RdYlBu", "Spectral"
         ])
+        self.plot_cmap_combo.setToolTip("Цветовая карта, которой окрашиваются стрелки по выбранной величине.")
         h_plot2.addWidget(self.plot_cmap_combo)
         h_plot2.addWidget(QLabel("color_by:"))
         self.color_by_combo = QComboBox()
         self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
+        self.color_by_combo.setToolTip(
+            "Величина, по которой окрашиваются стрелки:\n"
+            "L - длина вектора, dx/dy - компоненты смещения, angle - направление."
+        )
         h_plot2.addWidget(self.color_by_combo)
         h_plot2.addStretch()
         plot_layout.addLayout(h_plot2)
@@ -1771,10 +1909,18 @@ class CoordinateTransformTab(QWidget):
 
         # --- 1. Coordinate Transform ---
         transform_group = QGroupBox("1. Преобразование координат")
+        transform_group.setToolTip(
+            "Переводит координаты и смещения из пикселей в физические величины.\n"
+            "Координаты результата записываются в мм, скорости - в м/с."
+        )
         transform_layout = QVBoxLayout(transform_group)
 
         # Input CSV
         f_row, self.input_file_line = _file_row("Входной CSV:", self)
+        self.input_file_line.setToolTip(
+            "CSV после PTV/фильтрации или после усреднения.\n"
+            "Поддерживаются колонки X0/Y0/dx/dy/L или X_center/Y_center/dx_avg/dy_avg/L_avg."
+        )
         transform_layout.addLayout(f_row)
 
         # Origin
@@ -1784,12 +1930,20 @@ class CoordinateTransformTab(QWidget):
         self.x_origin_spin.setRange(-100000.0, 100000.0)
         self.x_origin_spin.setValue(0.0)
         self.x_origin_spin.setDecimals(1)
+        self.x_origin_spin.setToolTip(
+            "X координата нового начала системы координат в исходном изображении.\n"
+            "Единицы: px. Перед масштабированием из всех X вычитается это значение."
+        )
         h_origin.addWidget(self.x_origin_spin)
         h_origin.addWidget(QLabel("Y_origin (px):"))
         self.y_origin_spin = QDoubleSpinBox()
         self.y_origin_spin.setRange(-100000.0, 100000.0)
         self.y_origin_spin.setValue(0.0)
         self.y_origin_spin.setDecimals(1)
+        self.y_origin_spin.setToolTip(
+            "Y координата нового начала системы координат в исходном изображении.\n"
+            "Единицы: px. Перед масштабированием из всех Y вычитается это значение."
+        )
         h_origin.addWidget(self.y_origin_spin)
         h_origin.addStretch()
         transform_layout.addLayout(h_origin)
@@ -1800,6 +1954,10 @@ class CoordinateTransformTab(QWidget):
         self.rotation_spin = QSpinBox()
         self.rotation_spin.setRange(0, 360)
         self.rotation_spin.setValue(0)
+        self.rotation_spin.setToolTip(
+            "Угол поворота координат и векторов против часовой стрелки.\n"
+            "Единицы: градусы."
+        )
         h_rotation.addWidget(self.rotation_spin)
         h_rotation.addStretch()
         transform_layout.addLayout(h_rotation)
@@ -1812,6 +1970,10 @@ class CoordinateTransformTab(QWidget):
         self.scale_spin.setRange(0.0000001, 1000.0)
         self.scale_spin.setSingleStep(0.0001)
         self.scale_spin.setValue(0.0000075)
+        self.scale_spin.setToolTip(
+            "Физический размер одного пикселя.\n"
+            "Единицы: м/px. Координаты умножаются на scale и записываются в мм."
+        )
         h_scale.addWidget(self.scale_spin)
         h_scale.addWidget(QLabel("dt (с):"))
         self.dt_spin = QDoubleSpinBox()
@@ -1819,6 +1981,10 @@ class CoordinateTransformTab(QWidget):
         self.dt_spin.setRange(0.0000001, 1000.0)
         self.dt_spin.setSingleStep(0.0001)
         self.dt_spin.setValue(0.000002)
+        self.dt_spin.setToolTip(
+            "Временной интервал между кадрами A и B.\n"
+            "Единицы: секунды. Скорости считаются как dx * scale / dt и dy * scale / dt."
+        )
         h_scale.addWidget(self.dt_spin)
         h_scale.addStretch()
         transform_layout.addLayout(h_scale)
@@ -1829,9 +1995,14 @@ class CoordinateTransformTab(QWidget):
 
         # --- 2. Vector Plot (physical units) ---
         plot_group = QGroupBox("2. Визуализация векторов (м, м/с)")
+        plot_group.setToolTip(
+            "Строит график по CSV после преобразования координат.\n"
+            "Оси используют X_mm/Y_mm, компоненты скорости - dx_ms/dy_ms/L_ms."
+        )
         plot_layout = QVBoxLayout(plot_group)
 
         p_row, self.plot_file_line = _file_row("Входной CSV:", self)
+        self.plot_file_line.setToolTip("CSV после преобразования координат с колонками X_mm, Y_mm, dx_ms, dy_ms, L_ms.")
         plot_layout.addLayout(p_row)
 
         h_plot1 = QHBoxLayout()
@@ -1840,6 +2011,10 @@ class CoordinateTransformTab(QWidget):
         self.arrow_scale_spin.setRange(0.01, 1000.0)
         self.arrow_scale_spin.setValue(20.0)
         self.arrow_scale_spin.setDecimals(2)
+        self.arrow_scale_spin.setToolTip(
+            "Масштаб стрелок на графике Matplotlib.\n"
+            "Чем меньше значение, тем длиннее визуальные стрелки; скорости в CSV не меняются."
+        )
         h_plot1.addWidget(self.arrow_scale_spin)
         h_plot1.addWidget(QLabel("arrow_width:"))
         self.arrow_width_spin = QDoubleSpinBox()
@@ -1847,6 +2022,7 @@ class CoordinateTransformTab(QWidget):
         self.arrow_width_spin.setValue(0.003)
         self.arrow_width_spin.setSingleStep(0.001)
         self.arrow_width_spin.setDecimals(3)
+        self.arrow_width_spin.setToolTip("Толщина стрелок на итоговом графике. Это визуальная настройка без единиц измерения.")
         h_plot1.addWidget(self.arrow_width_spin)
         h_plot1.addStretch()
         plot_layout.addLayout(h_plot1)
@@ -1858,10 +2034,15 @@ class CoordinateTransformTab(QWidget):
             "jet", "viridis", "plasma", "inferno", "magma", "cividis",
             "coolwarm", "RdYlBu", "Spectral"
         ])
+        self.plot_cmap_combo.setToolTip("Цветовая карта, которой окрашиваются стрелки по выбранной физической величине.")
         h_plot2.addWidget(self.plot_cmap_combo)
         h_plot2.addWidget(QLabel("color_by:"))
         self.color_by_combo = QComboBox()
         self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
+        self.color_by_combo.setToolTip(
+            "Величина для окраски стрелок:\n"
+            "L - модуль скорости, dx/dy - компоненты скорости, angle - направление."
+        )
         h_plot2.addWidget(self.color_by_combo)
         h_plot2.addStretch()
         plot_layout.addLayout(h_plot2)
