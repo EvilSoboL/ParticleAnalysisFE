@@ -162,7 +162,12 @@ def _(files_e1c1, files_e1c2, files_e2c1, files_e2c2, mo, n_avg_input):
 
 
 @app.cell
-def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, lower_bound_input, mo, save_idx_btn, threshold_input):
+def _(
+    idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2,
+    lower_bound_c1, lower_bound_c2,
+    mo, save_idx_btn,
+    threshold_c1, threshold_c2,
+):
     import json as _json2
     from pathlib import Path as _Path2
 
@@ -170,8 +175,10 @@ def _(idx_e1c1, idx_e1c2, idx_e2c1, idx_e2c2, lower_bound_input, mo, save_idx_bt
 
     _STATE_FILE2 = _Path2(__file__).parent / "indices_state.json"
     _data = {
-        "threshold": int(threshold_input.value),
-        "lower_bound": int(lower_bound_input.value),
+        "threshold_c1": int(threshold_c1.value),
+        "lower_bound_c1": int(lower_bound_c1.value),
+        "threshold_c2": int(threshold_c2.value),
+        "lower_bound_c2": int(lower_bound_c2.value),
         "e1c1": [int(v) for v in idx_e1c1.value],
         "e1c2": [int(v) for v in idx_e1c2.value],
         "e2c1": [int(v) for v in idx_e2c1.value],
@@ -233,34 +240,40 @@ def _(mo):
     from pathlib import Path as _Path_thr
 
     _STATE_FILE_THR = _Path_thr(__file__).parent / "indices_state.json"
-    _thr_default = 1000
-    _lb_default = 1000
+    _thr_c1 = _thr_c2 = 1000
+    _lb_c1 = _lb_c2 = 1000
     if _STATE_FILE_THR.exists():
         try:
             _saved_thr = _json_thr.loads(
                 _STATE_FILE_THR.read_text(encoding="utf-8")
             )
-            _thr_default = _saved_thr.get("threshold", 1000)
-            _lb_default = _saved_thr.get("lower_bound", _thr_default)
+            _old_thr = _saved_thr.get("threshold", 1000)
+            _old_lb  = _saved_thr.get("lower_bound", _old_thr)
+            _thr_c1 = _saved_thr.get("threshold_c1", _old_thr)
+            _lb_c1  = _saved_thr.get("lower_bound_c1", _old_lb)
+            _thr_c2 = _saved_thr.get("threshold_c2", _old_thr)
+            _lb_c2  = _saved_thr.get("lower_bound_c2", _old_lb)
         except Exception:
             pass
 
-    threshold_input = mo.ui.number(
-        start=0, stop=65535, step=1, value=_thr_default,
-        label="Порог обнуления (0–65535)",
-    )
-    lower_bound_input = mo.ui.number(
-        start=0, stop=65535, step=1, value=_lb_default,
-        label="Нижняя граница сигнала (0–65535)",
-    )
+    threshold_c1 = mo.ui.number(start=0, stop=65535, step=1, value=_thr_c1,
+        label="Порог обнуления (0–65535)")
+    lower_bound_c1 = mo.ui.number(start=0, stop=65535, step=1, value=_lb_c1,
+        label="Нижняя граница сигнала (0–65535)")
+    threshold_c2 = mo.ui.number(start=0, stop=65535, step=1, value=_thr_c2,
+        label="Порог обнуления (0–65535)")
+    lower_bound_c2 = mo.ui.number(start=0, stop=65535, step=1, value=_lb_c2,
+        label="Нижняя граница сигнала (0–65535)")
+
     mo.vstack([
         mo.md("## Пороговые фильтры (16-bit)"),
-        mo.md("**Фильтр 1:** пиксели ниже порога обнуляются."),
-        threshold_input,
-        mo.md("**Фильтр 2:** ненулевые пиксели ниже нижней границы поднимаются до неё."),
-        lower_bound_input,
+        mo.md("**Фильтр 1:** пиксели ниже порога обнуляются. **Фильтр 2:** ненулевые пиксели ниже нижней границы поднимаются до неё."),
+        mo.hstack([
+            mo.vstack([mo.md("### cam_1"), threshold_c1, lower_bound_c1]),
+            mo.vstack([mo.md("### cam_2"), threshold_c2, lower_bound_c2]),
+        ]),
     ])
-    return (threshold_input, lower_bound_input)
+    return threshold_c1, lower_bound_c1, threshold_c2, lower_bound_c2
 
 
 @app.cell
@@ -289,18 +302,17 @@ def _(
     idx_e1c2,
     idx_e2c1,
     idx_e2c2,
-    lower_bound_input,
+    lower_bound_c1,
+    lower_bound_c2,
     mo,
     preview_cam,
-    threshold_input,
+    threshold_c1,
+    threshold_c2,
 ):
     import numpy as _np
     from PIL import Image as _Image
 
     mo.stop(not files_e1c1 or idx_e1c1 is None, mo.md("*Сначала загрузите файлы и введите номера*"))
-
-    _thr = threshold_input.value
-    _lb = lower_bound_input.value
 
     _all = {
         "e1c1": (files_e1c1, idx_e1c1.value),
@@ -308,7 +320,15 @@ def _(
         "e2c1": (files_e2c1, idx_e2c1.value),
         "e2c2": (files_e2c2, idx_e2c2.value),
     }
-    _files, _indices = _all[preview_cam.value]
+    _cam_key = preview_cam.value
+    _files, _indices = _all[_cam_key]
+
+    # выбираем фильтры по типу камеры
+    if _cam_key.endswith("c1"):
+        _thr, _lb = threshold_c1.value, lower_bound_c1.value
+    else:
+        _thr, _lb = threshold_c2.value, lower_bound_c2.value
+
     _k = int(_indices[0])
 
     if _k in _files:
@@ -323,7 +343,7 @@ def _(
             mo.md(f"### Превью — `#{_k}` — порог {_thr}, нижняя граница {_lb}"),
             mo.hstack([
                 mo.vstack([mo.md("**Оригинал**"), mo.image(_orig, width=800)]),
-                mo.vstack([mo.md(f"**С фильтрами**"), mo.image(_filt_img, width=800)]),
+                mo.vstack([mo.md("**С фильтрами**"), mo.image(_filt_img, width=800)]),
             ]),
         ])
     else:
@@ -352,10 +372,12 @@ def _(
     idx_e1c2,
     idx_e2c1,
     idx_e2c2,
-    lower_bound_input,
+    lower_bound_c1,
+    lower_bound_c2,
     mo,
     process_btn,
-    threshold_input,
+    threshold_c1,
+    threshold_c2,
 ):
     import numpy as _np
     from PIL import Image as _Image
@@ -365,17 +387,17 @@ def _(
         mo.md("*Нажмите «Суммировать и показать»*"),
     )
 
-    _thr = threshold_input.value
-    _lb = lower_bound_input.value
+    _thr1, _lb1 = threshold_c1.value, lower_bound_c1.value
+    _thr2, _lb2 = threshold_c2.value, lower_bound_c2.value
 
-    def _sum_cam_arr(files: dict, indices):
+    def _sum_cam_arr(files: dict, indices, thr, lb):
         """Возвращает numpy float64 массив 0-255, нормализованный по frame_max."""
         total = None
         frame_max = 0.0
         for idx in indices:
             arr = _np.array(_Image.open(files[int(idx)]), dtype=_np.float64)
-            arr[arr < _thr] = 0
-            arr = _np.where((arr > 0) & (arr < _lb), _lb, arr)
+            arr[arr < thr] = 0
+            arr = _np.where((arr > 0) & (arr < lb), lb, arr)
             frame_max = max(frame_max, float(arr.max()))
             total = arr if total is None else total + arr
         if frame_max > 0:
@@ -386,13 +408,13 @@ def _(
         return _Image.fromarray(_np.clip(arr, 0, 255).astype(_np.uint8))
 
     try:
-        sum_e1c1 = _sum_cam_arr(files_e1c1, idx_e1c1.value)
-        sum_e1c2 = _sum_cam_arr(files_e1c2, idx_e1c2.value)
-        sum_e2c1 = _sum_cam_arr(files_e2c1, idx_e2c1.value)
-        sum_e2c2 = _sum_cam_arr(files_e2c2, idx_e2c2.value)
+        sum_e1c1 = _sum_cam_arr(files_e1c1, idx_e1c1.value, _thr1, _lb1)
+        sum_e1c2 = _sum_cam_arr(files_e1c2, idx_e1c2.value, _thr2, _lb2)
+        sum_e2c1 = _sum_cam_arr(files_e2c1, idx_e2c1.value, _thr1, _lb1)
+        sum_e2c2 = _sum_cam_arr(files_e2c2, idx_e2c2.value, _thr2, _lb2)
 
         _out = mo.vstack([
-            mo.md(f"## Суммарная интенсивность (порог: {_thr} / 65535)"),
+            mo.md(f"## Суммарная интенсивность (cam_1: порог {_thr1} / cam_2: порог {_thr2})"),
             mo.md("### Эксперимент 1"),
             mo.hstack([
                 mo.vstack([mo.md("**cam_1**"), mo.image(_to_pil(sum_e1c1), width=700)]),

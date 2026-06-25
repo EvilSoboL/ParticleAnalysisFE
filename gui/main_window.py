@@ -1613,67 +1613,6 @@ class PTVProcessingTab(QWidget):
         result_layout.addWidget(self.processing_results_table)
         layout.addWidget(result_group)
 
-        # --- 3c. Vector Plot ---
-        plot_group = QGroupBox("3. Визуализация векторов")
-        plot_group.setToolTip(
-            "Строит PNG с векторным полем по выбранному CSV.\n"
-            "Единицы осей и векторов берутся из колонок выбранного файла."
-        )
-        plot_layout = QVBoxLayout(plot_group)
-
-        p_row, self.plot_file_line = _file_row("Входной CSV:", self)
-        self.plot_file_line.setToolTip("CSV для построения графика: обычно файл после усреднения.")
-        plot_layout.addLayout(p_row)
-
-        h_plot1 = QHBoxLayout()
-        h_plot1.addWidget(QLabel("arrow_scale:"))
-        self.arrow_scale_spin = QDoubleSpinBox()
-        self.arrow_scale_spin.setRange(0.01, 1000.0)
-        self.arrow_scale_spin.setValue(20.0)
-        self.arrow_scale_spin.setDecimals(2)
-        self.arrow_scale_spin.setToolTip(
-            "Масштаб стрелок на графике Matplotlib.\n"
-            "Чем меньше значение, тем длиннее визуальные стрелки; физические данные не меняются."
-        )
-        h_plot1.addWidget(self.arrow_scale_spin)
-        h_plot1.addWidget(QLabel("arrow_width:"))
-        self.arrow_width_spin = QDoubleSpinBox()
-        self.arrow_width_spin.setRange(0.001, 0.05)
-        self.arrow_width_spin.setValue(0.003)
-        self.arrow_width_spin.setSingleStep(0.001)
-        self.arrow_width_spin.setDecimals(3)
-        self.arrow_width_spin.setToolTip(
-            "Толщина стрелок на итоговом графике.\n"
-            "Это только визуальная настройка, без единиц измерения."
-        )
-        h_plot1.addWidget(self.arrow_width_spin)
-        h_plot1.addStretch()
-        plot_layout.addLayout(h_plot1)
-
-        h_plot2 = QHBoxLayout()
-        h_plot2.addWidget(QLabel("colormap:"))
-        self.plot_cmap_combo = QComboBox()
-        self.plot_cmap_combo.addItems([
-            "jet", "viridis", "plasma", "inferno", "magma", "cividis",
-            "coolwarm", "RdYlBu", "Spectral"
-        ])
-        self.plot_cmap_combo.setToolTip("Цветовая карта, которой окрашиваются стрелки по выбранной величине.")
-        h_plot2.addWidget(self.plot_cmap_combo)
-        h_plot2.addWidget(QLabel("color_by:"))
-        self.color_by_combo = QComboBox()
-        self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
-        self.color_by_combo.setToolTip(
-            "Величина, по которой окрашиваются стрелки:\n"
-            "L - длина вектора, dx/dy - компоненты смещения, angle - направление."
-        )
-        h_plot2.addWidget(self.color_by_combo)
-        h_plot2.addStretch()
-        plot_layout.addLayout(h_plot2)
-
-        self.plot_run_btn = QPushButton("Построить график")
-        plot_layout.addWidget(self.plot_run_btn)
-        layout.addWidget(plot_group)
-
         # Shared progress + log
         self.progress_bar = QProgressBar()
         self.status_label = QLabel("Готово")
@@ -1686,7 +1625,6 @@ class PTVProcessingTab(QWidget):
 
         # Connections
         self.avg_run_btn.clicked.connect(self._run_filter_average)
-        self.plot_run_btn.clicked.connect(self._run_plot)
 
     # ---- Run Filter + Average ----
     def _run_filter_average(self):
@@ -1745,36 +1683,6 @@ class PTVProcessingTab(QWidget):
         self._log(f"  Плоскость усреднения: {self.plane_w_spin.value()} x {self.plane_h_spin.value()}")
         self._log(f"  Ячейка усреднения: {self.cell_w_spin.value()} x {self.cell_h_spin.value()}")
         self._log(f"  Сетка усреднения: {grid_info['nx']} x {grid_info['ny']} = {grid_info['total_cells']} ячеек")
-        self._log("")
-        self._start_worker()
-
-    # ---- Run Plot ----
-    def _run_plot(self):
-        csv_path = self.plot_file_line.text().strip()
-        if not csv_path:
-            QMessageBox.warning(self, "Внимание", "Выберите входной CSV файл.")
-            return
-
-        params = VectorPlotParameters(
-            input_file=csv_path,
-            arrow_scale=self.arrow_scale_spin.value(),
-            arrow_width=self.arrow_width_spin.value(),
-            colormap=self.plot_cmap_combo.currentText(),
-            color_by=self.color_by_combo.currentText(),
-            invert_y=False,
-        )
-
-        self._executor = VectorPlotExecutor()
-        ok, msg = self._executor.set_parameters(params)
-        if not ok:
-            QMessageBox.critical(self, "Ошибка", msg)
-            return
-
-        self.log_text.clear()
-        self._log("Запуск визуализации векторов...")
-        self._log(f"  Вход: {csv_path}")
-        self._log(f"  arrow_scale: {params.arrow_scale}, arrow_width: {params.arrow_width}")
-        self._log(f"  colormap: {params.colormap}, color_by: {params.color_by}")
         self._log("")
         self._start_worker()
 
@@ -1890,25 +1798,86 @@ class PTVProcessingTab(QWidget):
 
     def _set_running(self, running: bool):
         self.avg_run_btn.setEnabled(not running)
-        self.plot_run_btn.setEnabled(not running)
 
 
 # ---------------------------------------------------------------------------
-# Tab 4: Coordinate Transform
+# Tab 4: Vector Graphics
 # ---------------------------------------------------------------------------
-class CoordinateTransformTab(QWidget):
+class VectorGraphicsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
         self._executor = None
         self._last_output_file = None
+        self._plot_unit_label = ""
         self._init_ui()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        # --- 1. Coordinate Transform ---
-        transform_group = QGroupBox("1. Преобразование координат")
+        # --- 1. Vector Plot (pixel units) ---
+        raw_plot_group = QGroupBox("1. Визуализация векторов (px)")
+        raw_plot_group.setToolTip(
+            "Строит PNG с векторным полем по CSV после усреднения.\n"
+            "Координаты и смещения до преобразования измеряются в пикселях."
+        )
+        raw_plot_layout = QVBoxLayout(raw_plot_group)
+
+        raw_row, self.raw_plot_file_line = _file_row("Входной CSV:", self)
+        self.raw_plot_file_line.setToolTip("CSV для построения графика в пикселях: обычно файл после усреднения.")
+        raw_plot_layout.addLayout(raw_row)
+
+        raw_h_plot1 = QHBoxLayout()
+        raw_h_plot1.addWidget(QLabel("arrow_scale:"))
+        self.raw_arrow_scale_spin = QDoubleSpinBox()
+        self.raw_arrow_scale_spin.setRange(0.01, 1000.0)
+        self.raw_arrow_scale_spin.setValue(20.0)
+        self.raw_arrow_scale_spin.setDecimals(2)
+        self.raw_arrow_scale_spin.setToolTip(
+            "Масштаб стрелок на графике Matplotlib.\n"
+            "Чем меньше значение, тем длиннее визуальные стрелки; данные в CSV не меняются."
+        )
+        raw_h_plot1.addWidget(self.raw_arrow_scale_spin)
+        raw_h_plot1.addWidget(QLabel("arrow_width:"))
+        self.raw_arrow_width_spin = QDoubleSpinBox()
+        self.raw_arrow_width_spin.setRange(0.001, 0.05)
+        self.raw_arrow_width_spin.setValue(0.003)
+        self.raw_arrow_width_spin.setSingleStep(0.001)
+        self.raw_arrow_width_spin.setDecimals(3)
+        self.raw_arrow_width_spin.setToolTip(
+            "Толщина стрелок на итоговом графике.\n"
+            "Это только визуальная настройка, без единиц измерения."
+        )
+        raw_h_plot1.addWidget(self.raw_arrow_width_spin)
+        raw_h_plot1.addStretch()
+        raw_plot_layout.addLayout(raw_h_plot1)
+
+        raw_h_plot2 = QHBoxLayout()
+        raw_h_plot2.addWidget(QLabel("colormap:"))
+        self.raw_plot_cmap_combo = QComboBox()
+        self.raw_plot_cmap_combo.addItems([
+            "jet", "viridis", "plasma", "inferno", "magma", "cividis",
+            "coolwarm", "RdYlBu", "Spectral"
+        ])
+        self.raw_plot_cmap_combo.setToolTip("Цветовая карта, которой окрашиваются стрелки по выбранной величине.")
+        raw_h_plot2.addWidget(self.raw_plot_cmap_combo)
+        raw_h_plot2.addWidget(QLabel("color_by:"))
+        self.raw_color_by_combo = QComboBox()
+        self.raw_color_by_combo.addItems(["L", "dx", "dy", "angle"])
+        self.raw_color_by_combo.setToolTip(
+            "Величина, по которой окрашиваются стрелки:\n"
+            "L - длина вектора, dx/dy - компоненты смещения, angle - направление."
+        )
+        raw_h_plot2.addWidget(self.raw_color_by_combo)
+        raw_h_plot2.addStretch()
+        raw_plot_layout.addLayout(raw_h_plot2)
+
+        self.raw_plot_run_btn = QPushButton("Построить график")
+        raw_plot_layout.addWidget(self.raw_plot_run_btn)
+        layout.addWidget(raw_plot_group)
+
+        # --- 2. Coordinate Transform ---
+        transform_group = QGroupBox("2. Преобразование координат")
         transform_group.setToolTip(
             "Переводит координаты и смещения из пикселей в физические величины.\n"
             "Координаты результата записываются в мм, скорости - в м/с."
@@ -1993,8 +1962,8 @@ class CoordinateTransformTab(QWidget):
         transform_layout.addWidget(self.transform_run_btn)
         layout.addWidget(transform_group)
 
-        # --- 2. Vector Plot (physical units) ---
-        plot_group = QGroupBox("2. Визуализация векторов (м, м/с)")
+        # --- 3. Vector Plot (physical units) ---
+        plot_group = QGroupBox("3. Визуализация векторов (м, м/с)")
         plot_group.setToolTip(
             "Строит график по CSV после преобразования координат.\n"
             "Оси используют X_mm/Y_mm, компоненты скорости - dx_ms/dy_ms/L_ms."
@@ -2062,8 +2031,41 @@ class CoordinateTransformTab(QWidget):
         layout.addWidget(self.log_text)
 
         # Connections
+        self.raw_plot_run_btn.clicked.connect(self._run_raw_plot)
         self.transform_run_btn.clicked.connect(self._run_transform)
         self.plot_run_btn.clicked.connect(self._run_plot)
+
+    # ---- Run Raw Vector Plot ----
+    def _run_raw_plot(self):
+        csv_path = self.raw_plot_file_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Внимание", "Выберите входной CSV файл.")
+            return
+
+        params = VectorPlotParameters(
+            input_file=csv_path,
+            arrow_scale=self.raw_arrow_scale_spin.value(),
+            arrow_width=self.raw_arrow_width_spin.value(),
+            colormap=self.raw_plot_cmap_combo.currentText(),
+            color_by=self.raw_color_by_combo.currentText(),
+            invert_y=False,
+        )
+
+        self._executor = VectorPlotExecutor()
+        ok, msg = self._executor.set_parameters(params)
+        if not ok:
+            QMessageBox.critical(self, "Ошибка", msg)
+            return
+
+        self._plot_unit_label = "px"
+        self.log_text.clear()
+        self._log("Запуск визуализации векторов в пикселях...")
+        self._log(f"  Вход: {csv_path}")
+        self._log(f"  arrow_scale: {params.arrow_scale}, arrow_width: {params.arrow_width}")
+        self._log(f"  colormap: {params.colormap}, color_by: {params.color_by}")
+        self._log("  оси: X (px), Y (px)")
+        self._log("")
+        self._start_worker()
 
     # ---- Run Transform ----
     def _run_transform(self):
@@ -2087,6 +2089,7 @@ class CoordinateTransformTab(QWidget):
             QMessageBox.critical(self, "Ошибка", msg)
             return
 
+        self._plot_unit_label = ""
         self.log_text.clear()
         self._log("Запуск преобразования координат...")
         self._log(f"  Вход: {csv_path}")
@@ -2137,6 +2140,7 @@ class CoordinateTransformTab(QWidget):
             QMessageBox.critical(self, "Ошибка", msg)
             return
 
+        self._plot_unit_label = "м/с"
         self.log_text.clear()
         self._log("Запуск визуализации в физических единицах...")
         self._log(f"  Вход: {csv_path}")
@@ -2183,10 +2187,11 @@ class CoordinateTransformTab(QWidget):
 
         # VectorPlotResult
         elif hasattr(result, 'vectors_count'):
+            unit_suffix = f" {self._plot_unit_label}" if self._plot_unit_label else ""
             self._log(f"Построено векторов: {result.vectors_count}")
-            self._log(f"dx: [{result.dx_min:.6f}, {result.dx_max:.6f}] m/s")
-            self._log(f"dy: [{result.dy_min:.6f}, {result.dy_max:.6f}] m/s")
-            self._log(f"L: [{result.l_min:.6f}, {result.l_max:.6f}] m/s")
+            self._log(f"dx: [{result.dx_min:.6f}, {result.dx_max:.6f}]{unit_suffix}")
+            self._log(f"dy: [{result.dy_min:.6f}, {result.dy_max:.6f}]{unit_suffix}")
+            self._log(f"L: [{result.l_min:.6f}, {result.l_max:.6f}]{unit_suffix}")
             self._log(f"Файл вывода: {result.output_file}")
 
         if result.errors:
@@ -2198,6 +2203,7 @@ class CoordinateTransformTab(QWidget):
         self._log(f"ОШИБКА: {msg}")
 
     def _set_running(self, running: bool):
+        self.raw_plot_run_btn.setEnabled(not running)
         self.transform_run_btn.setEnabled(not running)
         self.plot_run_btn.setEnabled(not running)
 
@@ -2219,7 +2225,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(PTVAnalysisTab(), "PTV анализ")
         tabs.addTab(PTVViewerTab(), "PTV результаты")
         tabs.addTab(PTVProcessingTab(), "PTV обработка")
-        tabs.addTab(CoordinateTransformTab(), "Преобразование координат")
+        tabs.addTab(VectorGraphicsTab(), "Векторные графики")
         self.setCentralWidget(tabs)
 
 
