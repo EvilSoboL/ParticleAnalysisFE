@@ -11,6 +11,8 @@ GUI приложение ParticleAnalysis на PyQt5.
 import sys
 import traceback
 from pathlib import Path
+from datetime import datetime
+import shutil
 import cv2
 
 # Добавление корня проекта в sys.path
@@ -1203,45 +1205,134 @@ class PTVViewerTab(QWidget):
         self.log_text.append(text)
 
 
-class VectorFilterBatchResult:
-    def __init__(self, results):
-        self.results = results
-        self.success = bool(results) and all(result.success for _camera, result in results)
-        self.input_vectors = sum(result.input_vectors for _camera, result in results)
-        self.output_vectors = sum(result.output_vectors for _camera, result in results)
-        self.vectors_removed = sum(result.vectors_removed for _camera, result in results)
+class PTVProcessingPipelineResult:
+    def __init__(self, camera_results, output_folder: str):
+        self.camera_results = camera_results
+        self.output_folder = output_folder
+        self.success = bool(camera_results) and all(item["success"] for item in camera_results)
+        self.errors = [
+            f"{item['camera']}: {error}"
+            for item in camera_results
+            for error in item.get("errors", [])
+        ]
+
+        self.input_vectors = sum(
+            item["filter_result"].input_vectors
+            for item in camera_results
+            if item.get("filter_result") is not None
+        )
+        self.output_vectors = sum(
+            item["filter_result"].output_vectors
+            for item in camera_results
+            if item.get("filter_result") is not None
+        )
+        self.vectors_removed = sum(
+            item["filter_result"].vectors_removed
+            for item in camera_results
+            if item.get("filter_result") is not None
+        )
         self.removal_percentage = (
             self.vectors_removed / self.input_vectors * 100 if self.input_vectors else 0.0
         )
-        self.u_min_filtered = sum(result.u_min_filtered for _camera, result in results)
-        self.u_max_filtered = sum(result.u_max_filtered for _camera, result in results)
-        self.v_min_filtered = sum(result.v_min_filtered for _camera, result in results)
-        self.v_max_filtered = sum(result.v_max_filtered for _camera, result in results)
-        self.errors = [
-            f"{camera}: {error}"
-            for camera, result in results
-            for error in result.errors
-        ]
-        self.output_files = [(camera, result.output_file) for camera, result in results if result.output_file]
-        self.output_file = "; ".join(output_file for _camera, output_file in self.output_files)
+        self.output_cells = sum(
+            item["average_result"].output_cells
+            for item in camera_results
+            if item.get("average_result") is not None
+        )
+        self.empty_cells = sum(
+            item["average_result"].empty_cells
+            for item in camera_results
+            if item.get("average_result") is not None
+        )
+        self.total_cells = sum(
+            item["average_result"].total_cells
+            for item in camera_results
+            if item.get("average_result") is not None
+        )
 
 
-class VectorFilterBatchExecutor:
-    def __init__(self, jobs):
-        self.jobs = jobs
+class PTVProcessingPipelineExecutor:
+    def __init__(self, pair_sum_jobs, filter_settings, average_settings):
+        self.pair_sum_jobs = pair_sum_jobs
+        self.filter_settings = filter_settings
+        self.average_settings = average_settings
 
     def execute(self):
-        results = []
-        for camera, params in self.jobs:
-            executor = VectorFilterExecutor()
-            ok, msg = executor.set_parameters(params)
-            if not ok:
-                failed = VectorFilterBatchResult(results)
-                failed.success = False
-                failed.errors.append(f"{camera}: {msg}")
-                return failed
-            results.append((camera, executor.execute()))
-        return VectorFilterBatchResult(results)
+        run_folder = self._make_run_folder()
+        pair_sum_folder = run_folder / "01_pair_sum"
+        filtered_folder = run_folder / "02_filtered"
+        averaged_folder = run_folder / "03_averaged"
+        pair_sum_folder.mkdir(parents=True, exist_ok=True)
+        filtered_folder.mkdir(parents=True, exist_ok=True)
+        averaged_folder.mkdir(parents=True, exist_ok=True)
+
+        camera_results = []
+        for camera, input_file in self.pair_sum_jobs:
+            source_path = Path(input_file)
+            saved_source = pair_sum_folder / f"{camera}_pair_sum{source_path.suffix or '.csv'}"
+            item = {
+                "camera": camera,
+                "source_file": str(source_path),
+                "saved_source_file": str(saved_source),
+                "filter_result": None,
+                "average_result": None,
+                "success": False,
+                "errors": [],
+            }
+
+            try:
+                shutil.copy2(source_path, saved_source)
+                filter_params = VectorFilterParameters(
+                    input_file=str(saved_source),
+                    output_folder=str(filtered_folder),
+                    **self.filter_settings,
+                )
+                filter_executor = VectorFilterExecutor()
+                ok, msg = filter_executor.set_parameters(filter_params)
+                if not ok:
+                    item["errors"].append(msg)
+                    camera_results.append(item)
+                    continue
+
+                filter_result = filter_executor.execute()
+                item["filter_result"] = filter_result
+                item["errors"].extend(filter_result.errors)
+                if not filter_result.success:
+                    camera_results.append(item)
+                    continue
+
+                average_params = VectorAverageParameters(
+                    input_file=filter_result.output_file,
+                    output_folder=str(averaged_folder),
+                    **self.average_settings,
+                )
+                average_executor = VectorAverageExecutor()
+                ok, msg = average_executor.set_parameters(average_params)
+                if not ok:
+                    item["errors"].append(msg)
+                    camera_results.append(item)
+                    continue
+
+                average_result = average_executor.execute()
+                item["average_result"] = average_result
+                item["errors"].extend(average_result.errors)
+                item["success"] = filter_result.success and average_result.success
+            except Exception as exc:
+                item["errors"].append(str(exc))
+
+            camera_results.append(item)
+
+        return PTVProcessingPipelineResult(camera_results, str(run_folder))
+
+    def _make_run_folder(self) -> Path:
+        base_folder = Path(self.pair_sum_jobs[0][1]).parent
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = base_folder / f"ptv_processing_{timestamp}"
+        counter = 2
+        while candidate.exists():
+            candidate = base_folder / f"ptv_processing_{timestamp}_{counter}"
+            counter += 1
+        return candidate
 
 
 class PTVProcessingTab(QWidget):
@@ -1299,16 +1390,11 @@ class PTVProcessingTab(QWidget):
         h_v.addStretch()
         filt_layout.addLayout(h_v)
 
-        self.filt_run_btn = QPushButton("Run Filter")
-        filt_layout.addWidget(self.filt_run_btn)
         layout.addWidget(filt_group)
 
         # --- 3b. Vector Average ---
         avg_group = QGroupBox("2. Vector Average")
         avg_layout = QVBoxLayout(avg_group)
-
-        a_row, self.avg_file_line = _file_row("Input CSV:", self)
-        avg_layout.addLayout(a_row)
 
         h_plane = QHBoxLayout()
         h_plane.addWidget(QLabel("plane_width:"))
@@ -1347,9 +1433,25 @@ class PTVProcessingTab(QWidget):
         h_cell.addStretch()
         avg_layout.addLayout(h_cell)
 
-        self.avg_run_btn = QPushButton("Run Average")
+        self.avg_run_btn = QPushButton("Run Filter + Average")
         avg_layout.addWidget(self.avg_run_btn)
         layout.addWidget(avg_group)
+
+        result_group = QGroupBox("Processing Results")
+        result_layout = QVBoxLayout(result_group)
+        self.processing_results_table = QTableWidget()
+        self.processing_results_table.setColumnCount(8)
+        self.processing_results_table.setHorizontalHeaderLabels([
+            "Camera", "Pair sum", "Filtered", "Averaged",
+            "Input", "Filtered", "Removed %", "Cells"
+        ])
+        self.processing_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.processing_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.processing_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.processing_results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.processing_results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        result_layout.addWidget(self.processing_results_table)
+        layout.addWidget(result_group)
 
         # --- 3c. Vector Plot ---
         plot_group = QGroupBox("3. Vector Plot")
@@ -1405,82 +1507,66 @@ class PTVProcessingTab(QWidget):
         layout.addWidget(self.log_text)
 
         # Connections
-        self.filt_run_btn.clicked.connect(self._run_filter)
-        self.avg_run_btn.clicked.connect(self._run_average)
+        self.avg_run_btn.clicked.connect(self._run_filter_average)
         self.plot_run_btn.clicked.connect(self._run_plot)
 
-    # ---- Run Filter ----
-    def _run_filter(self):
+    # ---- Run Filter + Average ----
+    def _run_filter_average(self):
         input_paths = [
             ("cam_1", self.filt_cam1_file_line.text().strip()),
             ("cam_2", self.filt_cam2_file_line.text().strip()),
         ]
         jobs = []
+        filter_settings = {
+            "filter_u": self.filter_u_cb.isChecked(),
+            "u_min": self.u_min_spin.value(),
+            "u_max": self.u_max_spin.value(),
+            "filter_v": self.filter_v_cb.isChecked(),
+            "v_min": self.v_min_spin.value(),
+            "v_max": self.v_max_spin.value(),
+        }
         for camera, csv_path in input_paths:
             if not csv_path:
                 continue
-            params = VectorFilterParameters(
-                input_file=csv_path,
-                filter_u=self.filter_u_cb.isChecked(),
-                u_min=self.u_min_spin.value(),
-                u_max=self.u_max_spin.value(),
-                filter_v=self.filter_v_cb.isChecked(),
-                v_min=self.v_min_spin.value(),
-                v_max=self.v_max_spin.value(),
-            )
+            params = VectorFilterParameters(input_file=csv_path, **filter_settings)
             ok, msg = params.validate()
             if not ok:
                 QMessageBox.critical(self, "Error", f"{camera}: {msg}")
                 return
-            jobs.append((camera, params))
+            jobs.append((camera, csv_path))
 
         if not jobs:
             QMessageBox.warning(self, "Warning", "Select cam_1 and/or cam_2 input CSV file.")
             return
 
-        self._executor = VectorFilterBatchExecutor(jobs)
-
-        self.log_text.clear()
-        self._log("Starting Vector Filter...")
-        for camera, params in jobs:
-            self._log(f"  {camera}: {params.input_file}")
-        if self.filter_u_cb.isChecked():
-            self._log(f"  U: [{self.u_min_spin.value()}, {self.u_max_spin.value()}]")
-        if self.filter_v_cb.isChecked():
-            self._log(f"  V: [{self.v_min_spin.value()}, {self.v_max_spin.value()}]")
-        self._log("")
-        self._start_worker()
-
-    # ---- Run Average ----
-    def _run_average(self):
-        csv_path = self.avg_file_line.text().strip()
-        if not csv_path:
-            QMessageBox.warning(self, "Warning", "Select input CSV file.")
-            return
-
-        params = VectorAverageParameters(
-            input_file=csv_path,
-            plane_width=self.plane_w_spin.value(),
-            plane_height=self.plane_h_spin.value(),
-            cell_width=self.cell_w_spin.value(),
-            cell_height=self.cell_h_spin.value(),
-            min_points_in_cell=self.min_pts_spin.value(),
-        )
-
-        self._executor = VectorAverageExecutor()
-        ok, msg = self._executor.set_parameters(params)
+        average_settings = {
+            "plane_width": self.plane_w_spin.value(),
+            "plane_height": self.plane_h_spin.value(),
+            "cell_width": self.cell_w_spin.value(),
+            "cell_height": self.cell_h_spin.value(),
+            "min_points_in_cell": self.min_pts_spin.value(),
+        }
+        avg_check = VectorAverageParameters(input_file=jobs[0][1], **average_settings)
+        ok, msg = avg_check.validate()
         if not ok:
             QMessageBox.critical(self, "Error", msg)
             return
 
-        grid_info = params.get_grid_info()
+        self._executor = PTVProcessingPipelineExecutor(jobs, filter_settings, average_settings)
+
         self.log_text.clear()
-        self._log("Starting Vector Average...")
-        self._log(f"  Input: {csv_path}")
-        self._log(f"  Plane: {params.plane_width} x {params.plane_height}")
-        self._log(f"  Cell: {params.cell_width} x {params.cell_height}")
-        self._log(f"  Grid: {grid_info['nx']} x {grid_info['ny']} = {grid_info['total_cells']} cells")
-        self._log(f"  Min points: {params.min_points_in_cell}")
+        self._clear_processing_results()
+        grid_info = avg_check.get_grid_info()
+        self._log("Starting PTV Processing...")
+        for camera, csv_path in jobs:
+            self._log(f"  {camera} pair_sum: {csv_path}")
+        if self.filter_u_cb.isChecked():
+            self._log(f"  U: [{self.u_min_spin.value()}, {self.u_max_spin.value()}]")
+        if self.filter_v_cb.isChecked():
+            self._log(f"  V: [{self.v_min_spin.value()}, {self.v_max_spin.value()}]")
+        self._log(f"  Average plane: {self.plane_w_spin.value()} x {self.plane_h_spin.value()}")
+        self._log(f"  Average cell: {self.cell_w_spin.value()} x {self.cell_h_spin.value()}")
+        self._log(f"  Average grid: {grid_info['nx']} x {grid_info['ny']} = {grid_info['total_cells']} cells")
         self._log("")
         self._start_worker()
 
@@ -1528,6 +1614,35 @@ class PTVProcessingTab(QWidget):
     def _log(self, text: str):
         self.log_text.append(text)
 
+    def _clear_processing_results(self):
+        self.processing_results_table.setRowCount(0)
+
+    def _populate_processing_results(self, result):
+        self.processing_results_table.setRowCount(len(result.camera_results))
+        for row, item in enumerate(result.camera_results):
+            filter_result = item.get("filter_result")
+            average_result = item.get("average_result")
+            filtered_file = filter_result.output_file if filter_result is not None else ""
+            averaged_file = average_result.output_file if average_result is not None else ""
+
+            values = [
+                item["camera"],
+                item["saved_source_file"],
+                filtered_file,
+                averaged_file,
+                str(filter_result.input_vectors) if filter_result is not None else "0",
+                str(filter_result.output_vectors) if filter_result is not None else "0",
+                f"{filter_result.removal_percentage:.1f}" if filter_result is not None else "0.0",
+                str(average_result.output_cells) if average_result is not None else "0",
+            ]
+            for col, value in enumerate(values):
+                display = Path(value).name if col in (1, 2, 3) and value else value
+                table_item = QTableWidgetItem(display)
+                if col in (1, 2, 3) and value:
+                    table_item.setToolTip(value)
+                self.processing_results_table.setItem(row, col, table_item)
+        self.processing_results_table.resizeRowsToContents()
+
     def _on_progress(self, pct, msg):
         self.progress_bar.setValue(int(pct))
         self.status_label.setText(msg)
@@ -1540,8 +1655,26 @@ class PTVProcessingTab(QWidget):
         self._log("--- Result ---")
         self._log(f"Success: {result.success}")
 
+        # PTVProcessingPipelineResult
+        if hasattr(result, 'camera_results'):
+            self._populate_processing_results(result)
+            self._log(f"Output folder: {result.output_folder}")
+            self._log(f"Input vectors: {result.input_vectors}")
+            self._log(f"Filtered vectors: {result.output_vectors}")
+            self._log(f"Removed: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
+            self._log(f"Averaged cells: {result.output_cells}")
+            for item in result.camera_results:
+                self._log(f"--- {item['camera']} ---")
+                self._log(f"Pair sum copy: {item['saved_source_file']}")
+                filter_result = item.get("filter_result")
+                average_result = item.get("average_result")
+                if filter_result is not None:
+                    self._log(f"Filtered: {filter_result.output_file}")
+                if average_result is not None:
+                    self._log(f"Averaged: {average_result.output_file}")
+
         # VectorFilterResult
-        if hasattr(result, 'input_vectors') and hasattr(result, 'vectors_removed'):
+        elif hasattr(result, 'input_vectors') and hasattr(result, 'vectors_removed'):
             self._log(f"Input vectors: {result.input_vectors}")
             self._log(f"Output vectors: {result.output_vectors}")
             self._log(f"Removed: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
@@ -1578,7 +1711,6 @@ class PTVProcessingTab(QWidget):
         self._log(f"ERROR: {msg}")
 
     def _set_running(self, running: bool):
-        self.filt_run_btn.setEnabled(not running)
         self.avg_run_btn.setEnabled(not running)
         self.plot_run_btn.setEnabled(not running)
 
