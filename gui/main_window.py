@@ -57,6 +57,44 @@ from execute.execute_processing.coordinate_transform import (
 )
 
 
+_EXPERIMENT_STATUS_LABELS = {
+    "Skipped": "Пропущен",
+    "Error": "Ошибка",
+    "Warning": "Предупреждение",
+    "OK": "OK",
+}
+
+_EXPERIMENT_MESSAGE_PREFIXES = [
+    ("Root folder does not exist:", "Корневая папка не существует:"),
+    ("Path is not a folder:", "Путь не является папкой:"),
+    ("No experiment*.afxml files found in", "Не найдены файлы experiment*.afxml в"),
+    ("Cannot parse XML:", "Не удалось разобрать XML:"),
+    ("Cannot read file:", "Не удалось прочитать файл:"),
+    ("node_record not found", "node_record не найден"),
+    ("data link not found; using afxml file stem", "data link не найден; используется имя afxml файла"),
+    ("Source folder does not exist:", "Исходная папка не существует:"),
+    ("Source path is not a folder:", "Исходный путь не является папкой:"),
+    ("No PNG files found", "PNG файлы не найдены"),
+    ("PNG count is not divisible by 4:", "Количество PNG не делится на 4:"),
+    ("Experiment name looks generic", "Название эксперимента выглядит слишком общим"),
+]
+
+
+def _experiment_status_label(status: str) -> str:
+    return _EXPERIMENT_STATUS_LABELS.get(status, status)
+
+
+def _translate_experiment_message(message: str) -> str:
+    for english, russian in _EXPERIMENT_MESSAGE_PREFIXES:
+        if message.startswith(english):
+            return f"{russian}{message[len(english):]}"
+    return message
+
+
+def _experiment_issue_text(record) -> str:
+    return "; ".join(_translate_experiment_message(item) for item in record.errors + record.warnings)
+
+
 # ---------------------------------------------------------------------------
 # WorkerThread
 # ---------------------------------------------------------------------------
@@ -92,7 +130,7 @@ def _folder_row(label_text: str, parent: QWidget):
     label = QLabel(label_text)
     label.setFixedWidth(110)
     line = QLineEdit()
-    btn = QPushButton("Browse...")
+    btn = QPushButton("Обзор...")
     btn.setFixedWidth(80)
 
     def _browse():
@@ -113,7 +151,7 @@ def _file_row(label_text: str, parent: QWidget, filter_str: str = "CSV files (*.
     label = QLabel(label_text)
     label.setFixedWidth(110)
     line = QLineEdit()
-    btn = QPushButton("Browse...")
+    btn = QPushButton("Обзор...")
     btn.setFixedWidth(80)
 
     def _browse():
@@ -143,29 +181,30 @@ class PrepareExperimentsTab(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        root_layout, self.root_line = _folder_row("Root folder:", self)
+        root_layout, self.root_line = _folder_row("Корневая папка:", self)
         layout.addLayout(root_layout)
 
-        output_layout, self.output_root_line = _folder_row("Output root:", self)
-        self.output_root_line.setPlaceholderText("Optional; defaults to <root>_processed")
+        output_layout, self.output_root_line = _folder_row("Папка вывода:", self)
+        self.output_root_line.setPlaceholderText("Необязательно; по умолчанию <root>_processed")
         layout.addLayout(output_layout)
 
         btn_layout = QHBoxLayout()
-        self.scan_btn = QPushButton("Scan")
-        self.use_btn = QPushButton("Use in Sort + Binarize")
+        self.scan_btn = QPushButton("Сканировать")
+        self.use_btn = QPushButton("Передать в сортировку + бинаризацию")
         self.use_btn.setEnabled(False)
         btn_layout.addWidget(self.scan_btn)
         btn_layout.addWidget(self.use_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("Готово")
         layout.addWidget(self.status_label)
 
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
-            "Skip", "ID", "Experiment name", "Source folder", "PNG", "Status", "Output base", "Issues"
+            "Пропуск", "ID", "Название эксперимента", "Исходная папка",
+            "PNG", "Статус", "Папка вывода", "Проблемы"
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -195,21 +234,21 @@ class PrepareExperimentsTab(QWidget):
     def _scan(self):
         root_folder = self.root_line.text().strip()
         if not root_folder:
-            QMessageBox.warning(self, "Warning", "Select experiment root folder.")
+            QMessageBox.warning(self, "Внимание", "Выберите корневую папку экспериментов.")
             return
 
         if not self.output_root_line.text().strip():
             self.output_root_line.setText(default_processed_root(root_folder))
 
         self.log_text.clear()
-        self._log(f"Scanning: {root_folder}")
+        self._log(f"Сканирование: {root_folder}")
         scan_result = scan_experiment_root(root_folder)
         self._records = scan_result.records
         self._populate_table()
 
         if scan_result.errors:
             for error in scan_result.errors:
-                self._log(f"ERROR: {error}")
+                self._log(f"ОШИБКА: {_translate_experiment_message(error)}")
 
         self._update_status_label()
         self.use_btn.setEnabled(bool(self._records))
@@ -233,9 +272,9 @@ class PrepareExperimentsTab(QWidget):
                 record.name,
                 str(Path(record.source_folder).name),
                 str(record.png_count),
-                record.status,
+                _experiment_status_label(record.status),
                 output_base,
-                record.issue_text,
+                _experiment_issue_text(record),
             ]
 
             for col, value in enumerate(values):
@@ -273,7 +312,7 @@ class PrepareExperimentsTab(QWidget):
         if item is None:
             item = QTableWidgetItem()
             self.table.setItem(row, 5, item)
-        item.setText(status)
+        item.setText(_experiment_status_label(status))
 
     def _refresh_output_base_column(self, *_args):
         for row, record in enumerate(self._records):
@@ -289,7 +328,7 @@ class PrepareExperimentsTab(QWidget):
         ready_count = sum(1 for record in self._records if record.sort_ready and not record.skipped)
         skipped_count = sum(1 for record in self._records if record.skipped)
         self.status_label.setText(
-            f"Found {len(self._records)} experiments, {ready_count} ready, {skipped_count} skipped"
+            f"Найдено экспериментов: {len(self._records)}, готово: {ready_count}, пропущено: {skipped_count}"
         )
 
     def _selected_record(self):
@@ -310,22 +349,22 @@ class PrepareExperimentsTab(QWidget):
     def _use_selected(self):
         record = self._selected_record()
         if record is None:
-            QMessageBox.warning(self, "Warning", "Select an experiment first.")
+            QMessageBox.warning(self, "Внимание", "Сначала выберите эксперимент.")
             return
 
         if record.skipped:
             QMessageBox.warning(
                 self,
-                "Experiment skipped",
-                "This experiment is marked as skipped and will not be used for Sort + Binarize.",
+                "Эксперимент пропущен",
+                "Этот эксперимент отмечен как пропущенный и не будет использован для сортировки + бинаризации.",
             )
             return
 
         if not record.sort_ready:
             QMessageBox.critical(
                 self,
-                "Experiment is not ready",
-                record.issue_text or "Experiment cannot be used for Sort + Binarize.",
+                "Эксперимент не готов",
+                _experiment_issue_text(record) or "Эксперимент нельзя использовать для сортировки + бинаризации.",
             )
             return
 
@@ -335,9 +374,9 @@ class PrepareExperimentsTab(QWidget):
             experiment_name=record.name,
             output_base_folder=output_base,
         )
-        self._log(f"Selected: {record.name}")
-        self._log(f"Input: {record.source_folder}")
-        self._log(f"Output base: {output_base}")
+        self._log(f"Выбрано: {record.name}")
+        self._log(f"Вход: {record.source_folder}")
+        self._log(f"Папка вывода: {output_base}")
 
         if self.tabs is not None:
             self.tabs.setCurrentWidget(self.sort_tab)
@@ -368,20 +407,20 @@ class SortBinarizeTab(QWidget):
         layout = QVBoxLayout(self)
 
         # Input folder
-        folder_layout, self.input_line = _folder_row("Input folder:", self)
+        folder_layout, self.input_line = _folder_row("Входная папка:", self)
         layout.addLayout(folder_layout)
 
         # Optional output base folder
-        output_layout, self.output_base_line = _folder_row("Output base:", self)
-        self.output_base_line.setPlaceholderText("Optional; defaults to <input>_cam_sorted")
+        output_layout, self.output_base_line = _folder_row("Папка вывода:", self)
+        self.output_base_line.setPlaceholderText("Необязательно; по умолчанию <input>_cam_sorted")
         layout.addLayout(output_layout)
 
-        self.experiment_label = QLabel("Experiment: -")
+        self.experiment_label = QLabel("Эксперимент: -")
         layout.addWidget(self.experiment_label)
 
         # Threshold
         h = QHBoxLayout()
-        h.addWidget(QLabel("Threshold:"))
+        h.addWidget(QLabel("Порог:"))
         self.threshold_spin = QSpinBox()
         self.threshold_spin.setRange(0, 65535)
         self.threshold_spin.setValue(2000)
@@ -391,14 +430,14 @@ class SortBinarizeTab(QWidget):
         layout.addLayout(h)
 
         # Validate format
-        self.validate_cb = QCheckBox("Validate format (16-bit PNG)")
+        self.validate_cb = QCheckBox("Проверять формат (16-bit PNG)")
         self.validate_cb.setChecked(True)
         layout.addWidget(self.validate_cb)
 
         # Run / Cancel
         btn_layout = QHBoxLayout()
-        self.run_btn = QPushButton("Run")
-        self.cancel_btn = QPushButton("Cancel")
+        self.run_btn = QPushButton("Запустить")
+        self.cancel_btn = QPushButton("Отмена")
         self.cancel_btn.setEnabled(False)
         btn_layout.addWidget(self.run_btn)
         btn_layout.addWidget(self.cancel_btn)
@@ -407,7 +446,7 @@ class SortBinarizeTab(QWidget):
 
         # Progress
         self.progress_bar = QProgressBar()
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("Готово")
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
 
@@ -424,7 +463,7 @@ class SortBinarizeTab(QWidget):
     def _run(self):
         folder = self.input_line.text().strip()
         if not folder:
-            QMessageBox.warning(self, "Warning", "Select input folder.")
+            QMessageBox.warning(self, "Внимание", "Выберите входную папку.")
             return
 
         output_base = self.output_base_line.text().strip()
@@ -439,20 +478,20 @@ class SortBinarizeTab(QWidget):
         self._executor = SortBinarizeExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, "Ошибка", msg)
             return
 
         self._set_running(True)
         self.log_text.clear()
         self.progress_bar.setValue(0)
-        self._log(f"Starting Sort + Binarize...")
-        self._log(f"  Input: {folder}")
+        self._log("Запуск сортировки + бинаризации...")
+        self._log(f"  Вход: {folder}")
         if self._experiment_name:
-            self._log(f"  Experiment: {self._experiment_name}")
+            self._log(f"  Эксперимент: {self._experiment_name}")
         if output_base:
-            self._log(f"  Output base: {output_base}")
-        self._log(f"  Threshold: {self.threshold_spin.value()}")
-        self._log(f"  Validate: {self.validate_cb.isChecked()}")
+            self._log(f"  Папка вывода: {output_base}")
+        self._log(f"  Порог: {self.threshold_spin.value()}")
+        self._log(f"  Проверка: {self.validate_cb.isChecked()}")
         self._log("")
 
         self._worker = WorkerThread(self._executor, self)
@@ -464,7 +503,7 @@ class SortBinarizeTab(QWidget):
     def _cancel(self):
         if self._executor:
             self._executor.cancel()
-        self._log("Cancellation requested...")
+        self._log("Запрошена отмена...")
 
     def _log(self, text: str):
         self.log_text.append(text)
@@ -473,17 +512,17 @@ class SortBinarizeTab(QWidget):
         self._experiment_name = experiment_name
         self.input_line.setText(input_folder)
         self.output_base_line.setText(output_base_folder)
-        self.experiment_label.setText(f"Experiment: {experiment_name}")
+        self.experiment_label.setText(f"Эксперимент: {experiment_name}")
         self.log_text.clear()
-        self._log("Prepared experiment selected.")
-        self._log(f"Input: {input_folder}")
-        self._log(f"Output base: {output_base_folder}")
+        self._log("Выбран подготовленный эксперимент.")
+        self._log(f"Вход: {input_folder}")
+        self._log(f"Папка вывода: {output_base_folder}")
 
     def _clear_prepared_experiment(self, *_args):
         if self._experiment_name:
             self._experiment_name = None
             self.output_base_line.clear()
-            self.experiment_label.setText("Experiment: -")
+            self.experiment_label.setText("Эксперимент: -")
 
     def _on_progress(self, pct, msg):
         self.progress_bar.setValue(int(pct))
@@ -493,21 +532,21 @@ class SortBinarizeTab(QWidget):
     def _on_finished(self, result):
         self._set_running(False)
         self.progress_bar.setValue(100)
-        self.status_label.setText("Done" if result.success else "Failed")
-        self._log("--- Result ---")
-        self._log(f"Success: {result.success}")
-        self._log(f"Cam1 count: {result.cam1_count}")
-        self._log(f"Cam2 count: {result.cam2_count}")
-        self._log(f"Total processed: {result.total_processed}")
-        self._log(f"Output: {result.output_folder}")
-        self._log(f"Threshold: {result.threshold}")
+        self.status_label.setText("Готово" if result.success else "Ошибка")
+        self._log("--- Результат ---")
+        self._log(f"Успешно: {result.success}")
+        self._log(f"Кадров cam_1: {result.cam1_count}")
+        self._log(f"Кадров cam_2: {result.cam2_count}")
+        self._log(f"Всего обработано: {result.total_processed}")
+        self._log(f"Вывод: {result.output_folder}")
+        self._log(f"Порог: {result.threshold}")
         if result.errors:
-            self._log(f"Errors: {result.errors}")
+            self._log(f"Ошибки: {result.errors}")
 
     def _on_error(self, msg):
         self._set_running(False)
-        self.status_label.setText("Error")
-        self._log(f"ERROR: {msg}")
+        self.status_label.setText("Ошибка")
+        self._log(f"ОШИБКА: {msg}")
 
     def _set_running(self, running: bool):
         self.run_btn.setEnabled(not running)
@@ -528,11 +567,11 @@ class PTVAnalysisTab(QWidget):
         layout = QVBoxLayout(self)
 
         # Input folder
-        folder_layout, self.input_line = _folder_row("Input folder:", self)
+        folder_layout, self.input_line = _folder_row("Входная папка:", self)
         layout.addLayout(folder_layout)
 
         # Detection parameters
-        det_group = QGroupBox("Detection parameters")
+        det_group = QGroupBox("Параметры детекции")
         det_layout = QVBoxLayout(det_group)
 
         h1 = QHBoxLayout()
@@ -551,7 +590,7 @@ class PTVAnalysisTab(QWidget):
         layout.addWidget(det_group)
 
         # Matching parameters
-        match_group = QGroupBox("Matching parameters")
+        match_group = QGroupBox("Параметры сопоставления")
         match_layout = QVBoxLayout(match_group)
 
         h2 = QHBoxLayout()
@@ -571,8 +610,8 @@ class PTVAnalysisTab(QWidget):
 
         # Run / Cancel
         btn_layout = QHBoxLayout()
-        self.run_btn = QPushButton("Run")
-        self.cancel_btn = QPushButton("Cancel")
+        self.run_btn = QPushButton("Запустить")
+        self.cancel_btn = QPushButton("Отмена")
         self.cancel_btn.setEnabled(False)
         btn_layout.addWidget(self.run_btn)
         btn_layout.addWidget(self.cancel_btn)
@@ -581,7 +620,7 @@ class PTVAnalysisTab(QWidget):
 
         # Progress
         self.progress_bar = QProgressBar()
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("Готово")
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
 
@@ -597,7 +636,7 @@ class PTVAnalysisTab(QWidget):
     def _run(self):
         folder = self.input_line.text().strip()
         if not folder:
-            QMessageBox.warning(self, "Warning", "Select input folder.")
+            QMessageBox.warning(self, "Внимание", "Выберите входную папку.")
             return
 
         params = PTVParameters(
@@ -611,14 +650,14 @@ class PTVAnalysisTab(QWidget):
         self._executor = PTVExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, "Ошибка", msg)
             return
 
         self._set_running(True)
         self.log_text.clear()
         self.progress_bar.setValue(0)
-        self._log(f"Starting PTV Analysis...")
-        self._log(f"  Input: {folder}")
+        self._log("Запуск PTV анализа...")
+        self._log(f"  Вход: {folder}")
         self._log(f"  min_area: {self.min_area_spin.value()}, max_area: {self.max_area_spin.value()}")
         self._log(f"  max_distance: {self.max_dist_spin.value()}, max_diameter_diff: {self.max_diam_spin.value()}")
         self._log("")
@@ -632,7 +671,7 @@ class PTVAnalysisTab(QWidget):
     def _cancel(self):
         if self._executor:
             self._executor.cancel()
-        self._log("Cancellation requested...")
+        self._log("Запрошена отмена...")
 
     def _log(self, text: str):
         self.log_text.append(text)
@@ -645,24 +684,24 @@ class PTVAnalysisTab(QWidget):
     def _on_finished(self, result):
         self._set_running(False)
         self.progress_bar.setValue(100)
-        self.status_label.setText("Done" if result.success else "Failed")
-        self._log("--- Result ---")
-        self._log(f"Success: {result.success}")
-        self._log(f"Total images processed: {result.total_images_processed}")
-        self._log(f"Total particles detected: {result.total_particles_detected}")
-        self._log(f"Total pairs matched: {result.total_pairs_matched}")
-        self._log(f"Cam1 pairs: {result.cam1_pairs_count}")
-        self._log(f"Cam2 pairs: {result.cam2_pairs_count}")
-        self._log(f"Output: {result.output_folder}")
+        self.status_label.setText("Готово" if result.success else "Ошибка")
+        self._log("--- Результат ---")
+        self._log(f"Успешно: {result.success}")
+        self._log(f"Обработано изображений: {result.total_images_processed}")
+        self._log(f"Найдено частиц: {result.total_particles_detected}")
+        self._log(f"Сопоставлено пар: {result.total_pairs_matched}")
+        self._log(f"Пар cam_1: {result.cam1_pairs_count}")
+        self._log(f"Пар cam_2: {result.cam2_pairs_count}")
+        self._log(f"Вывод: {result.output_folder}")
         if result.errors:
-            self._log(f"Errors: {result.errors}")
+            self._log(f"Ошибки: {result.errors}")
         if result.warnings:
-            self._log(f"Warnings: {result.warnings}")
+            self._log(f"Предупреждения: {result.warnings}")
 
     def _on_error(self, msg):
         self._set_running(False)
-        self.status_label.setText("Error")
-        self._log(f"ERROR: {msg}")
+        self.status_label.setText("Ошибка")
+        self._log(f"ОШИБКА: {msg}")
 
     def _set_running(self, running: bool):
         self.run_btn.setEnabled(not running)
@@ -684,9 +723,9 @@ def _bgr_to_pixmap(image):
 
 class PTVImageView(QWidget):
     LEGEND_ITEMS = [
-        ("Frame A particles", QColor(0, 255, 0)),
-        ("Frame B positions", QColor(255, 0, 0)),
-        ("Displacement vector", QColor(255, 165, 0)),
+        ("Частицы кадра A", QColor(0, 255, 0)),
+        ("Позиции кадра B", QColor(255, 0, 0)),
+        ("Вектор смещения", QColor(255, 165, 0)),
     ]
 
     def __init__(self, parent=None):
@@ -698,7 +737,7 @@ class PTVImageView(QWidget):
         self._drag_current = None
         self.setMinimumSize(360, 260)
         self.setMouseTracking(True)
-        self.setToolTip("Drag a rectangle to zoom. Right-click or Zoom Out to reduce scale.")
+        self.setToolTip("Выделите область мышью для увеличения. Правый клик или «Уменьшить» снижает масштаб.")
 
     def set_image(self, image):
         self._pixmap = _bgr_to_pixmap(image)
@@ -752,7 +791,7 @@ class PTVImageView(QWidget):
 
         if self._pixmap.isNull() or self._view_rect.isNull():
             painter.setPen(QColor(180, 180, 180))
-            painter.drawText(self.rect(), Qt.AlignCenter, "Preview")
+            painter.drawText(self.rect(), Qt.AlignCenter, "Предпросмотр")
             return
 
         target = self._target_rect()
@@ -816,7 +855,7 @@ class PTVImageView(QWidget):
 
         margin = 10
         row_h = 22
-        box_w = 215
+        box_w = 230
         box_h = margin * 2 + row_h * len(self.LEGEND_ITEMS)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor(0, 0, 0, 170)))
@@ -937,12 +976,12 @@ class PTVPreviewDialog(QDialog):
 
         layout = QVBoxLayout(self)
         btn_layout = QHBoxLayout()
-        self.back_btn = QPushButton("Back")
-        self.zoom_out_btn = QPushButton("Zoom Out")
-        self.reset_btn = QPushButton("Reset")
-        self.back_btn.setToolTip("Return to the previous zoom area")
-        self.zoom_out_btn.setToolTip("Expand the current zoom area around its center")
-        self.reset_btn.setToolTip("Show the full image")
+        self.back_btn = QPushButton("Назад")
+        self.zoom_out_btn = QPushButton("Уменьшить")
+        self.reset_btn = QPushButton("Сброс")
+        self.back_btn.setToolTip("Вернуться к предыдущей области просмотра")
+        self.zoom_out_btn.setToolTip("Расширить текущую область вокруг её центра")
+        self.reset_btn.setToolTip("Показать всё изображение")
         btn_layout.addWidget(self.back_btn)
         btn_layout.addWidget(self.zoom_out_btn)
         btn_layout.addWidget(self.reset_btn)
@@ -969,30 +1008,30 @@ class PTVViewerTab(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        ptv_layout, self.ptv_line = _folder_row("PTV folder:", self)
+        ptv_layout, self.ptv_line = _folder_row("Папка PTV:", self)
         layout.addLayout(ptv_layout)
 
-        original_layout, self.original_line = _folder_row("Images folder:", self)
-        self.original_line.setPlaceholderText("Optional; inferred from PTV_<threshold>")
+        original_layout, self.original_line = _folder_row("Папка кадров:", self)
+        self.original_line.setPlaceholderText("Необязательно; определяется из PTV_<threshold>")
         layout.addLayout(original_layout)
 
         btn_layout = QHBoxLayout()
-        self.scan_btn = QPushButton("Scan")
-        self.preview_btn = QPushButton("Preview Selected")
-        self.open_btn = QPushButton("Open Large")
-        self.save_btn = QPushButton("Save Selected")
-        self.back_btn = QPushButton("Back")
-        self.zoom_out_btn = QPushButton("Zoom Out")
-        self.reset_zoom_btn = QPushButton("Reset")
+        self.scan_btn = QPushButton("Сканировать")
+        self.preview_btn = QPushButton("Показать выбранное")
+        self.open_btn = QPushButton("Открыть крупно")
+        self.save_btn = QPushButton("Сохранить выбранное")
+        self.back_btn = QPushButton("Назад")
+        self.zoom_out_btn = QPushButton("Уменьшить")
+        self.reset_zoom_btn = QPushButton("Сброс")
         self.preview_btn.setEnabled(False)
         self.open_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self.back_btn.setEnabled(False)
         self.zoom_out_btn.setEnabled(False)
         self.reset_zoom_btn.setEnabled(False)
-        self.back_btn.setToolTip("Return to the previous zoom area")
-        self.zoom_out_btn.setToolTip("Expand the current zoom area around its center")
-        self.reset_zoom_btn.setToolTip("Show the full image")
+        self.back_btn.setToolTip("Вернуться к предыдущей области просмотра")
+        self.zoom_out_btn.setToolTip("Расширить текущую область вокруг её центра")
+        self.reset_zoom_btn.setToolTip("Показать всё изображение")
         btn_layout.addWidget(self.scan_btn)
         btn_layout.addWidget(self.preview_btn)
         btn_layout.addWidget(self.open_btn)
@@ -1003,14 +1042,15 @@ class PTVViewerTab(QWidget):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("Готово")
         layout.addWidget(self.status_label)
 
         splitter = QSplitter(Qt.Horizontal)
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
-            "Camera", "Pair", "Matches", "Mean L", "Max L", "Mean dx", "Mean dy", "Source", "CSV"
+            "Камера", "Пара", "Совпадений", "Средн. L", "Макс. L",
+            "Средн. dx", "Средн. dy", "Кадры", "CSV"
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1020,7 +1060,7 @@ class PTVViewerTab(QWidget):
 
         preview_panel = QWidget()
         preview_layout = QVBoxLayout(preview_panel)
-        self.info_label = QLabel("Select a pair")
+        self.info_label = QLabel("Выберите пару")
         preview_layout.addWidget(self.info_label)
 
         self.preview_view = PTVImageView()
@@ -1047,14 +1087,14 @@ class PTVViewerTab(QWidget):
     def _scan(self):
         ptv_folder = self.ptv_line.text().strip()
         if not ptv_folder:
-            QMessageBox.warning(self, "Warning", "Select PTV result folder.")
+            QMessageBox.warning(self, "Внимание", "Выберите папку с результатами PTV.")
             return
 
         self.log_text.clear()
-        self.status_label.setText("Scanning...")
+        self.status_label.setText("Сканирование...")
         self._preview_image = None
         self._set_preview_labels(None)
-        self.info_label.setText("Select a pair")
+        self.info_label.setText("Выберите пару")
 
         result = scan_ptv_pairs(ptv_folder, self.original_line.text().strip() or None)
         self._records = result.records
@@ -1062,7 +1102,7 @@ class PTVViewerTab(QWidget):
             self.original_line.setText(result.original_folder)
 
         for error in result.errors:
-            self._log(f"Warning: {error}")
+            self._log(f"Предупреждение: {error}")
 
         visualizer_ready = False
         if result.original_folder:
@@ -1070,13 +1110,13 @@ class PTVViewerTab(QWidget):
             ptv_ok = self._visualizer.set_ptv_folder(ptv_folder) if original_ok else False
             visualizer_ready = original_ok and ptv_ok
             if not visualizer_ready:
-                self._log("Warning: Cannot initialize preview for selected folders.")
+                self._log("Предупреждение: не удалось инициализировать предпросмотр для выбранных папок.")
         else:
-            self._log("Warning: Images folder was not found. Select it manually to enable previews.")
+            self._log("Предупреждение: папка кадров не найдена. Выберите её вручную, чтобы включить предпросмотр.")
 
         self._populate_table()
 
-        self.status_label.setText(f"Found {len(self._records)} pairs in {ptv_folder}")
+        self.status_label.setText(f"Найдено пар: {len(self._records)} в {ptv_folder}")
         self.preview_btn.setEnabled(bool(self._records) and visualizer_ready)
         self.save_btn.setEnabled(bool(self._records) and visualizer_ready)
         self.open_btn.setEnabled(self._preview_image is not None)
@@ -1098,7 +1138,7 @@ class PTVViewerTab(QWidget):
                 f"{record.max_l:.2f}",
                 f"{record.mean_dx:.2f}",
                 f"{record.mean_dy:.2f}",
-                "OK" if record.source_ok else "Missing",
+                "OK" if record.source_ok else "Нет",
                 Path(record.csv_path).name,
             ]
             for col, value in enumerate(values):
@@ -1127,7 +1167,7 @@ class PTVViewerTab(QWidget):
         if record is None:
             return
         if not record.source_ok:
-            self.info_label.setText("Source images are missing")
+            self.info_label.setText("Исходные кадры не найдены")
             self._set_preview_labels(None)
             self.open_btn.setEnabled(False)
             self.back_btn.setEnabled(False)
@@ -1142,7 +1182,7 @@ class PTVViewerTab(QWidget):
         )
         self._preview_image = preview
         if preview is None:
-            self.info_label.setText("Preview failed")
+            self.info_label.setText("Не удалось построить предпросмотр")
             self._set_preview_labels(None)
             self.open_btn.setEnabled(False)
             self.back_btn.setEnabled(False)
@@ -1151,8 +1191,8 @@ class PTVViewerTab(QWidget):
             return
 
         self.info_label.setText(
-            f"{record.camera}, pair {record.pair_number}: "
-            f"{record.matches_count} matches, mean L={record.mean_l:.2f}, max L={record.max_l:.2f}"
+            f"{record.camera}, пара {record.pair_number}: "
+            f"совпадений {record.matches_count}, средн. L={record.mean_l:.2f}, макс. L={record.max_l:.2f}"
         )
         self._set_preview_labels(preview)
         self.open_btn.setEnabled(True)
@@ -1173,11 +1213,11 @@ class PTVViewerTab(QWidget):
         if self._preview_image is None:
             self._preview_selected()
         if self._preview_image is None:
-            QMessageBox.warning(self, "Warning", "No preview is available for this pair.")
+            QMessageBox.warning(self, "Внимание", "Для этой пары нет предпросмотра.")
             return
         dialog = PTVPreviewDialog(
             self._preview_image,
-            f"{record.camera} pair {record.pair_number}",
+            f"{record.camera}, пара {record.pair_number}",
             self,
         )
         dialog.exec_()
@@ -1185,21 +1225,21 @@ class PTVViewerTab(QWidget):
     def _save_selected(self):
         record = self._selected_record()
         if record is None:
-            QMessageBox.warning(self, "Warning", "Select a pair first.")
+            QMessageBox.warning(self, "Внимание", "Сначала выберите пару.")
             return
         if not record.source_ok:
-            QMessageBox.warning(self, "Warning", "Source images are missing.")
+            QMessageBox.warning(self, "Внимание", "Исходные кадры не найдены.")
             return
 
         result = self._visualizer.process_pair_on_first_frame(record.camera, record.pair_number)
         if result.get("success"):
             self._log(
-                f"Saved {result.get('visualizations_created', 0)} images for "
-                f"{record.camera} pair {record.pair_number}"
+                f"Сохранено изображений: {result.get('visualizations_created', 0)} для "
+                f"{record.camera}, пара {record.pair_number}"
             )
-            self._log(f"Output: {result.get('output_file') or self._visualizer.output_folder}")
+            self._log(f"Вывод: {result.get('output_file') or self._visualizer.output_folder}")
         else:
-            QMessageBox.warning(self, "Warning", "; ".join(result.get("errors", [])) or "Save failed.")
+            QMessageBox.warning(self, "Внимание", "; ".join(result.get("errors", [])) or "Не удалось сохранить.")
 
     def _log(self, text: str):
         self.log_text.append(text)
@@ -1346,7 +1386,7 @@ class PTVProcessingTab(QWidget):
         layout = QVBoxLayout(self)
 
         # --- 3a. Vector Filter ---
-        filt_group = QGroupBox("1. Vector Filter")
+        filt_group = QGroupBox("1. Фильтр векторов")
         filt_layout = QVBoxLayout(filt_group)
 
         f_cam1_row, self.filt_cam1_file_line = _file_row("cam_1 CSV:", self)
@@ -1356,7 +1396,7 @@ class PTVProcessingTab(QWidget):
 
         # U range
         h_u = QHBoxLayout()
-        self.filter_u_cb = QCheckBox("Filter U")
+        self.filter_u_cb = QCheckBox("Фильтр U")
         self.filter_u_cb.setChecked(True)
         h_u.addWidget(self.filter_u_cb)
         h_u.addWidget(QLabel("min:"))
@@ -1374,7 +1414,7 @@ class PTVProcessingTab(QWidget):
 
         # V range
         h_v = QHBoxLayout()
-        self.filter_v_cb = QCheckBox("Filter V")
+        self.filter_v_cb = QCheckBox("Фильтр V")
         self.filter_v_cb.setChecked(True)
         h_v.addWidget(self.filter_v_cb)
         h_v.addWidget(QLabel("min:"))
@@ -1393,7 +1433,7 @@ class PTVProcessingTab(QWidget):
         layout.addWidget(filt_group)
 
         # --- 3b. Vector Average ---
-        avg_group = QGroupBox("2. Vector Average")
+        avg_group = QGroupBox("2. Усреднение векторов")
         avg_layout = QVBoxLayout(avg_group)
 
         h_plane = QHBoxLayout()
@@ -1433,17 +1473,17 @@ class PTVProcessingTab(QWidget):
         h_cell.addStretch()
         avg_layout.addLayout(h_cell)
 
-        self.avg_run_btn = QPushButton("Run Filter + Average")
+        self.avg_run_btn = QPushButton("Запустить фильтр + усреднение")
         avg_layout.addWidget(self.avg_run_btn)
         layout.addWidget(avg_group)
 
-        result_group = QGroupBox("Processing Results")
+        result_group = QGroupBox("Результаты обработки")
         result_layout = QVBoxLayout(result_group)
         self.processing_results_table = QTableWidget()
         self.processing_results_table.setColumnCount(8)
         self.processing_results_table.setHorizontalHeaderLabels([
-            "Camera", "Pair sum", "Filtered", "Averaged",
-            "Input", "Filtered", "Removed %", "Cells"
+            "Камера", "pair_sum", "После фильтра", "После усреднения",
+            "Вход", "После фильтра", "Удалено %", "Ячейки"
         ])
         self.processing_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.processing_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1454,10 +1494,10 @@ class PTVProcessingTab(QWidget):
         layout.addWidget(result_group)
 
         # --- 3c. Vector Plot ---
-        plot_group = QGroupBox("3. Vector Plot")
+        plot_group = QGroupBox("3. Визуализация векторов")
         plot_layout = QVBoxLayout(plot_group)
 
-        p_row, self.plot_file_line = _file_row("Input CSV:", self)
+        p_row, self.plot_file_line = _file_row("Входной CSV:", self)
         plot_layout.addLayout(p_row)
 
         h_plot1 = QHBoxLayout()
@@ -1492,13 +1532,13 @@ class PTVProcessingTab(QWidget):
         h_plot2.addStretch()
         plot_layout.addLayout(h_plot2)
 
-        self.plot_run_btn = QPushButton("Run Plot")
+        self.plot_run_btn = QPushButton("Построить график")
         plot_layout.addWidget(self.plot_run_btn)
         layout.addWidget(plot_group)
 
         # Shared progress + log
         self.progress_bar = QProgressBar()
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("Готово")
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
 
@@ -1531,12 +1571,12 @@ class PTVProcessingTab(QWidget):
             params = VectorFilterParameters(input_file=csv_path, **filter_settings)
             ok, msg = params.validate()
             if not ok:
-                QMessageBox.critical(self, "Error", f"{camera}: {msg}")
+                QMessageBox.critical(self, "Ошибка", f"{camera}: {msg}")
                 return
             jobs.append((camera, csv_path))
 
         if not jobs:
-            QMessageBox.warning(self, "Warning", "Select cam_1 and/or cam_2 input CSV file.")
+            QMessageBox.warning(self, "Внимание", "Выберите входной CSV для cam_1 и/или cam_2.")
             return
 
         average_settings = {
@@ -1549,7 +1589,7 @@ class PTVProcessingTab(QWidget):
         avg_check = VectorAverageParameters(input_file=jobs[0][1], **average_settings)
         ok, msg = avg_check.validate()
         if not ok:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, "Ошибка", msg)
             return
 
         self._executor = PTVProcessingPipelineExecutor(jobs, filter_settings, average_settings)
@@ -1557,16 +1597,16 @@ class PTVProcessingTab(QWidget):
         self.log_text.clear()
         self._clear_processing_results()
         grid_info = avg_check.get_grid_info()
-        self._log("Starting PTV Processing...")
+        self._log("Запуск обработки PTV...")
         for camera, csv_path in jobs:
             self._log(f"  {camera} pair_sum: {csv_path}")
         if self.filter_u_cb.isChecked():
             self._log(f"  U: [{self.u_min_spin.value()}, {self.u_max_spin.value()}]")
         if self.filter_v_cb.isChecked():
             self._log(f"  V: [{self.v_min_spin.value()}, {self.v_max_spin.value()}]")
-        self._log(f"  Average plane: {self.plane_w_spin.value()} x {self.plane_h_spin.value()}")
-        self._log(f"  Average cell: {self.cell_w_spin.value()} x {self.cell_h_spin.value()}")
-        self._log(f"  Average grid: {grid_info['nx']} x {grid_info['ny']} = {grid_info['total_cells']} cells")
+        self._log(f"  Плоскость усреднения: {self.plane_w_spin.value()} x {self.plane_h_spin.value()}")
+        self._log(f"  Ячейка усреднения: {self.cell_w_spin.value()} x {self.cell_h_spin.value()}")
+        self._log(f"  Сетка усреднения: {grid_info['nx']} x {grid_info['ny']} = {grid_info['total_cells']} ячеек")
         self._log("")
         self._start_worker()
 
@@ -1574,7 +1614,7 @@ class PTVProcessingTab(QWidget):
     def _run_plot(self):
         csv_path = self.plot_file_line.text().strip()
         if not csv_path:
-            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+            QMessageBox.warning(self, "Внимание", "Выберите входной CSV файл.")
             return
 
         params = VectorPlotParameters(
@@ -1589,12 +1629,12 @@ class PTVProcessingTab(QWidget):
         self._executor = VectorPlotExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, "Ошибка", msg)
             return
 
         self.log_text.clear()
-        self._log("Starting Vector Plot...")
-        self._log(f"  Input: {csv_path}")
+        self._log("Запуск визуализации векторов...")
+        self._log(f"  Вход: {csv_path}")
         self._log(f"  arrow_scale: {params.arrow_scale}, arrow_width: {params.arrow_width}")
         self._log(f"  colormap: {params.colormap}, color_by: {params.color_by}")
         self._log("")
@@ -1651,64 +1691,64 @@ class PTVProcessingTab(QWidget):
     def _on_finished(self, result):
         self._set_running(False)
         self.progress_bar.setValue(100)
-        self.status_label.setText("Done" if result.success else "Failed")
-        self._log("--- Result ---")
-        self._log(f"Success: {result.success}")
+        self.status_label.setText("Готово" if result.success else "Ошибка")
+        self._log("--- Результат ---")
+        self._log(f"Успешно: {result.success}")
 
         # PTVProcessingPipelineResult
         if hasattr(result, 'camera_results'):
             self._populate_processing_results(result)
-            self._log(f"Output folder: {result.output_folder}")
-            self._log(f"Input vectors: {result.input_vectors}")
-            self._log(f"Filtered vectors: {result.output_vectors}")
-            self._log(f"Removed: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
-            self._log(f"Averaged cells: {result.output_cells}")
+            self._log(f"Папка вывода: {result.output_folder}")
+            self._log(f"Векторов на входе: {result.input_vectors}")
+            self._log(f"Векторов после фильтра: {result.output_vectors}")
+            self._log(f"Удалено: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
+            self._log(f"Ячеек после усреднения: {result.output_cells}")
             for item in result.camera_results:
                 self._log(f"--- {item['camera']} ---")
-                self._log(f"Pair sum copy: {item['saved_source_file']}")
+                self._log(f"Копия pair_sum: {item['saved_source_file']}")
                 filter_result = item.get("filter_result")
                 average_result = item.get("average_result")
                 if filter_result is not None:
-                    self._log(f"Filtered: {filter_result.output_file}")
+                    self._log(f"После фильтра: {filter_result.output_file}")
                 if average_result is not None:
-                    self._log(f"Averaged: {average_result.output_file}")
+                    self._log(f"После усреднения: {average_result.output_file}")
 
         # VectorFilterResult
         elif hasattr(result, 'input_vectors') and hasattr(result, 'vectors_removed'):
-            self._log(f"Input vectors: {result.input_vectors}")
-            self._log(f"Output vectors: {result.output_vectors}")
-            self._log(f"Removed: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
+            self._log(f"Векторов на входе: {result.input_vectors}")
+            self._log(f"Векторов на выходе: {result.output_vectors}")
+            self._log(f"Удалено: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
             if hasattr(result, 'output_files'):
                 for camera, output_file in result.output_files:
-                    self._log(f"{camera} output file: {output_file}")
+                    self._log(f"{camera}, файл вывода: {output_file}")
             else:
-                self._log(f"Output file: {result.output_file}")
+                self._log(f"Файл вывода: {result.output_file}")
 
         # VectorAverageResult
         elif hasattr(result, 'output_cells'):
-            self._log(f"Input vectors: {result.input_vectors}")
-            self._log(f"Grid: {result.grid_size[0]} x {result.grid_size[1]}")
-            self._log(f"Non-empty cells: {result.output_cells}")
-            self._log(f"Empty cells: {result.empty_cells}")
-            self._log(f"Points per cell: min={result.min_points_per_cell}, "
+            self._log(f"Векторов на входе: {result.input_vectors}")
+            self._log(f"Сетка: {result.grid_size[0]} x {result.grid_size[1]}")
+            self._log(f"Непустых ячеек: {result.output_cells}")
+            self._log(f"Пустых ячеек: {result.empty_cells}")
+            self._log(f"Точек в ячейке: min={result.min_points_per_cell}, "
                        f"max={result.max_points_per_cell}, avg={result.avg_points_per_cell:.1f}")
-            self._log(f"Output file: {result.output_file}")
+            self._log(f"Файл вывода: {result.output_file}")
 
         # VectorPlotResult
         elif hasattr(result, 'vectors_count'):
-            self._log(f"Vectors plotted: {result.vectors_count}")
+            self._log(f"Построено векторов: {result.vectors_count}")
             self._log(f"dx: [{result.dx_min:.3f}, {result.dx_max:.3f}]")
             self._log(f"dy: [{result.dy_min:.3f}, {result.dy_max:.3f}]")
             self._log(f"L: [{result.l_min:.3f}, {result.l_max:.3f}]")
-            self._log(f"Output file: {result.output_file}")
+            self._log(f"Файл вывода: {result.output_file}")
 
         if result.errors:
-            self._log(f"Errors: {result.errors}")
+            self._log(f"Ошибки: {result.errors}")
 
     def _on_error(self, msg):
         self._set_running(False)
-        self.status_label.setText("Error")
-        self._log(f"ERROR: {msg}")
+        self.status_label.setText("Ошибка")
+        self._log(f"ОШИБКА: {msg}")
 
     def _set_running(self, running: bool):
         self.avg_run_btn.setEnabled(not running)
@@ -1730,11 +1770,11 @@ class CoordinateTransformTab(QWidget):
         layout = QVBoxLayout(self)
 
         # --- 1. Coordinate Transform ---
-        transform_group = QGroupBox("1. Coordinate Transform")
+        transform_group = QGroupBox("1. Преобразование координат")
         transform_layout = QVBoxLayout(transform_group)
 
         # Input CSV
-        f_row, self.input_file_line = _file_row("Input CSV:", self)
+        f_row, self.input_file_line = _file_row("Входной CSV:", self)
         transform_layout.addLayout(f_row)
 
         # Origin
@@ -1756,7 +1796,7 @@ class CoordinateTransformTab(QWidget):
 
         # Rotation
         h_rotation = QHBoxLayout()
-        h_rotation.addWidget(QLabel("Rotation angle (°):"))
+        h_rotation.addWidget(QLabel("Угол поворота (°):"))
         self.rotation_spin = QSpinBox()
         self.rotation_spin.setRange(0, 360)
         self.rotation_spin.setValue(0)
@@ -1766,14 +1806,14 @@ class CoordinateTransformTab(QWidget):
 
         # Scale
         h_scale = QHBoxLayout()
-        h_scale.addWidget(QLabel("Scale (m/px):"))
+        h_scale.addWidget(QLabel("Масштаб (м/px):"))
         self.scale_spin = QDoubleSpinBox()
         self.scale_spin.setDecimals(7)
         self.scale_spin.setRange(0.0000001, 1000.0)
         self.scale_spin.setSingleStep(0.0001)
         self.scale_spin.setValue(0.0000075)
         h_scale.addWidget(self.scale_spin)
-        h_scale.addWidget(QLabel("dt (s):"))
+        h_scale.addWidget(QLabel("dt (с):"))
         self.dt_spin = QDoubleSpinBox()
         self.dt_spin.setDecimals(7)
         self.dt_spin.setRange(0.0000001, 1000.0)
@@ -1783,15 +1823,15 @@ class CoordinateTransformTab(QWidget):
         h_scale.addStretch()
         transform_layout.addLayout(h_scale)
 
-        self.transform_run_btn = QPushButton("Run Transform")
+        self.transform_run_btn = QPushButton("Преобразовать")
         transform_layout.addWidget(self.transform_run_btn)
         layout.addWidget(transform_group)
 
         # --- 2. Vector Plot (physical units) ---
-        plot_group = QGroupBox("2. Vector Plot (m, m/s)")
+        plot_group = QGroupBox("2. Визуализация векторов (м, м/с)")
         plot_layout = QVBoxLayout(plot_group)
 
-        p_row, self.plot_file_line = _file_row("Input CSV:", self)
+        p_row, self.plot_file_line = _file_row("Входной CSV:", self)
         plot_layout.addLayout(p_row)
 
         h_plot1 = QHBoxLayout()
@@ -1826,13 +1866,13 @@ class CoordinateTransformTab(QWidget):
         h_plot2.addStretch()
         plot_layout.addLayout(h_plot2)
 
-        self.plot_run_btn = QPushButton("Run Plot")
+        self.plot_run_btn = QPushButton("Построить график")
         plot_layout.addWidget(self.plot_run_btn)
         layout.addWidget(plot_group)
 
         # Shared progress + log
         self.progress_bar = QProgressBar()
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("Готово")
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
 
@@ -1848,7 +1888,7 @@ class CoordinateTransformTab(QWidget):
     def _run_transform(self):
         csv_path = self.input_file_line.text().strip()
         if not csv_path:
-            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+            QMessageBox.warning(self, "Внимание", "Выберите входной CSV файл.")
             return
 
         params = CoordinateTransformParameters(
@@ -1863,15 +1903,15 @@ class CoordinateTransformTab(QWidget):
         self._executor = CoordinateTransformExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, "Ошибка", msg)
             return
 
         self.log_text.clear()
-        self._log("Starting Coordinate Transform...")
-        self._log(f"  Input: {csv_path}")
+        self._log("Запуск преобразования координат...")
+        self._log(f"  Вход: {csv_path}")
         self._log(f"  X_origin: {params.x_origin}, Y_origin: {params.y_origin}")
-        self._log(f"  Rotation angle: {params.rotation_angle}°")
-        self._log(f"  Scale: {params.scale} m/px")
+        self._log(f"  Угол поворота: {params.rotation_angle}°")
+        self._log(f"  Масштаб: {params.scale} м/px")
         self._log(f"  dt: {params.dt} s")
         self._log("")
         self._start_worker()
@@ -1880,7 +1920,7 @@ class CoordinateTransformTab(QWidget):
     def _run_plot(self):
         csv_path = self.plot_file_line.text().strip()
         if not csv_path:
-            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+            QMessageBox.warning(self, "Внимание", "Выберите входной CSV файл.")
             return
 
         # Map color_by GUI value to transformed column name
@@ -1888,7 +1928,7 @@ class CoordinateTransformTab(QWidget):
         color_by_map = {"L": "L", "dx": "dx", "dy": "dy", "angle": "angle"}
         l_column_map = {"L": "L_ms", "dx": "dx_ms", "dy": "dy_ms", "angle": "L_ms"}
         colorbar_labels = {
-            "L": "L (m/s)", "dx": "dx (m/s)", "dy": "dy (m/s)", "angle": "Angle (degrees)"
+            "L": "L (м/с)", "dx": "dx (м/с)", "dy": "dy (м/с)", "angle": "Угол (градусы)"
         }
 
         params = VectorPlotParameters(
@@ -1903,9 +1943,9 @@ class CoordinateTransformTab(QWidget):
             dx_column="dx_ms",
             dy_column="dy_ms",
             l_column="L_ms",
-            title="Vector Field (physical units)",
-            xlabel="X (mm)",
-            ylabel="Y (mm)",
+            title="Поле векторов (физические единицы)",
+            xlabel="X (мм)",
+            ylabel="Y (мм)",
             invert_y=False,
             suffix="_plot_phys",
         )
@@ -1913,15 +1953,15 @@ class CoordinateTransformTab(QWidget):
         self._executor = VectorPlotExecutor()
         ok, msg = self._executor.set_parameters(params)
         if not ok:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, "Ошибка", msg)
             return
 
         self.log_text.clear()
-        self._log("Starting Vector Plot (physical units)...")
-        self._log(f"  Input: {csv_path}")
+        self._log("Запуск визуализации в физических единицах...")
+        self._log(f"  Вход: {csv_path}")
         self._log(f"  arrow_scale: {params.arrow_scale}, arrow_width: {params.arrow_width}")
         self._log(f"  colormap: {params.colormap}, color_by: {params.color_by}")
-        self._log(f"  axes: X (m), Y (m)")
+        self._log("  оси: X (м), Y (м)")
         self._log("")
         self._start_worker()
 
@@ -1947,34 +1987,34 @@ class CoordinateTransformTab(QWidget):
     def _on_finished(self, result):
         self._set_running(False)
         self.progress_bar.setValue(100)
-        self.status_label.setText("Done" if result.success else "Failed")
-        self._log("--- Result ---")
-        self._log(f"Success: {result.success}")
+        self.status_label.setText("Готово" if result.success else "Ошибка")
+        self._log("--- Результат ---")
+        self._log(f"Успешно: {result.success}")
 
         # CoordinateTransformResult
         if hasattr(result, 'input_rows') and hasattr(result, 'output_rows'):
-            self._log(f"Input rows: {result.input_rows}")
-            self._log(f"Output rows: {result.output_rows}")
-            self._log(f"Output file: {result.output_file}")
+            self._log(f"Строк на входе: {result.input_rows}")
+            self._log(f"Строк на выходе: {result.output_rows}")
+            self._log(f"Файл вывода: {result.output_file}")
             if result.success and result.output_file:
                 self._last_output_file = result.output_file
                 self.plot_file_line.setText(result.output_file)
 
         # VectorPlotResult
         elif hasattr(result, 'vectors_count'):
-            self._log(f"Vectors plotted: {result.vectors_count}")
+            self._log(f"Построено векторов: {result.vectors_count}")
             self._log(f"dx: [{result.dx_min:.6f}, {result.dx_max:.6f}] m/s")
             self._log(f"dy: [{result.dy_min:.6f}, {result.dy_max:.6f}] m/s")
             self._log(f"L: [{result.l_min:.6f}, {result.l_max:.6f}] m/s")
-            self._log(f"Output file: {result.output_file}")
+            self._log(f"Файл вывода: {result.output_file}")
 
         if result.errors:
-            self._log(f"Errors: {result.errors}")
+            self._log(f"Ошибки: {result.errors}")
 
     def _on_error(self, msg):
         self._set_running(False)
-        self.status_label.setText("Error")
-        self._log(f"ERROR: {msg}")
+        self.status_label.setText("Ошибка")
+        self._log(f"ОШИБКА: {msg}")
 
     def _set_running(self, running: bool):
         self.transform_run_btn.setEnabled(not running)
@@ -1993,12 +2033,12 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         self.sort_binarize_tab = SortBinarizeTab()
         self.prepare_experiments_tab = PrepareExperimentsTab(self.sort_binarize_tab, tabs)
-        tabs.addTab(self.prepare_experiments_tab, "Prepare Experiments")
-        tabs.addTab(self.sort_binarize_tab, "Sort + Binarize")
-        tabs.addTab(PTVAnalysisTab(), "PTV Analysis")
-        tabs.addTab(PTVViewerTab(), "PTV Results")
-        tabs.addTab(PTVProcessingTab(), "PTV Processing")
-        tabs.addTab(CoordinateTransformTab(), "Coordinate Transform")
+        tabs.addTab(self.prepare_experiments_tab, "Подготовка экспериментов")
+        tabs.addTab(self.sort_binarize_tab, "Сортировка + бинаризация")
+        tabs.addTab(PTVAnalysisTab(), "PTV анализ")
+        tabs.addTab(PTVViewerTab(), "PTV результаты")
+        tabs.addTab(PTVProcessingTab(), "PTV обработка")
+        tabs.addTab(CoordinateTransformTab(), "Преобразование координат")
         self.setCentralWidget(tabs)
 
 
