@@ -11,8 +11,6 @@ GUI приложение ParticleAnalysis на PyQt5.
 import sys
 import traceback
 from pathlib import Path
-from datetime import datetime
-import shutil
 import cv2
 
 # Добавление корня проекта в sys.path
@@ -1371,22 +1369,15 @@ class PTVProcessingPipelineExecutor:
         self.average_settings = average_settings
 
     def execute(self):
-        run_folder = self._make_run_folder()
-        pair_sum_folder = run_folder / "01_pair_sum"
-        filtered_folder = run_folder / "02_filtered"
-        averaged_folder = run_folder / "03_averaged"
-        pair_sum_folder.mkdir(parents=True, exist_ok=True)
-        filtered_folder.mkdir(parents=True, exist_ok=True)
-        averaged_folder.mkdir(parents=True, exist_ok=True)
-
         camera_results = []
+        output_folders = set()
         for camera, input_file in self.pair_sum_jobs:
             source_path = Path(input_file)
-            saved_source = pair_sum_folder / f"{camera}_pair_sum{source_path.suffix or '.csv'}"
+            output_folders.add(str(source_path.parent))
             item = {
                 "camera": camera,
                 "source_file": str(source_path),
-                "saved_source_file": str(saved_source),
+                "saved_source_file": str(source_path),
                 "filter_result": None,
                 "average_result": None,
                 "success": False,
@@ -1394,10 +1385,8 @@ class PTVProcessingPipelineExecutor:
             }
 
             try:
-                shutil.copy2(source_path, saved_source)
                 filter_params = VectorFilterParameters(
-                    input_file=str(saved_source),
-                    output_folder=str(filtered_folder),
+                    input_file=str(source_path),
                     **self.filter_settings,
                 )
                 filter_executor = VectorFilterExecutor()
@@ -1416,7 +1405,6 @@ class PTVProcessingPipelineExecutor:
 
                 average_params = VectorAverageParameters(
                     input_file=filter_result.output_file,
-                    output_folder=str(averaged_folder),
                     **self.average_settings,
                 )
                 average_executor = VectorAverageExecutor()
@@ -1435,17 +1423,8 @@ class PTVProcessingPipelineExecutor:
 
             camera_results.append(item)
 
-        return PTVProcessingPipelineResult(camera_results, str(run_folder))
-
-    def _make_run_folder(self) -> Path:
-        base_folder = Path(self.pair_sum_jobs[0][1]).parent
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        candidate = base_folder / f"ptv_processing_{timestamp}"
-        counter = 2
-        while candidate.exists():
-            candidate = base_folder / f"ptv_processing_{timestamp}_{counter}"
-            counter += 1
-        return candidate
+        output_folder = "; ".join(sorted(output_folders))
+        return PTVProcessingPipelineResult(camera_results, output_folder)
 
 
 class PTVProcessingTab(QWidget):
@@ -1597,7 +1576,7 @@ class PTVProcessingTab(QWidget):
             "Вход", "После фильтра", "Удалено %", "Ячейки"
         ])
         _set_header_tooltips(self.processing_results_table, {
-            1: "Копия исходного pair_sum CSV, сохраненная в папке запуска.",
+            1: "Исходный pair_sum CSV. Результаты фильтра и усреднения сохраняются рядом с ним.",
             2: "CSV после удаления векторов, не прошедших фильтры U/V.",
             3: "CSV после усреднения прошедших фильтр векторов по ячейкам сетки.",
             4: "Количество векторов во входном pair_sum CSV.",
@@ -1744,14 +1723,14 @@ class PTVProcessingTab(QWidget):
         # PTVProcessingPipelineResult
         if hasattr(result, 'camera_results'):
             self._populate_processing_results(result)
-            self._log(f"Папка вывода: {result.output_folder}")
+            self._log(f"Сохранено рядом с: {result.output_folder}")
             self._log(f"Векторов на входе: {result.input_vectors}")
             self._log(f"Векторов после фильтра: {result.output_vectors}")
             self._log(f"Удалено: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
             self._log(f"Ячеек после усреднения: {result.output_cells}")
             for item in result.camera_results:
                 self._log(f"--- {item['camera']} ---")
-                self._log(f"Копия pair_sum: {item['saved_source_file']}")
+                self._log(f"pair_sum: {item['saved_source_file']}")
                 filter_result = item.get("filter_result")
                 average_result = item.get("average_result")
                 if filter_result is not None:
