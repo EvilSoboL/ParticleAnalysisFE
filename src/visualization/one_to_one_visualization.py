@@ -271,7 +271,8 @@ class PTVVisualizer:
 
     def create_visualization(self,
                             original_image: np.ndarray,
-                            pairs: List[MatchedPair]) -> np.ndarray:
+                            pairs: List[MatchedPair],
+                            draw_legend: bool = True) -> np.ndarray:
         """
         Создание визуализации сопоставления на исходном изображении.
 
@@ -319,7 +320,8 @@ class PTVVisualizer:
             if 0 <= x < w and 0 <= y < h:
                 cv2.circle(vis_image, (x, y), radius, cfg.particle_b_color, 1)
 
-        self._draw_legend(vis_image)
+        if draw_legend:
+            self._draw_legend(vis_image)
         return vis_image
 
     def _draw_legend(self, image: np.ndarray) -> None:
@@ -721,7 +723,12 @@ class PTVVisualizer:
 
         return vis_a, vis_b
 
-    def get_preview_image(self, camera_name: str, pair_number: int) -> Optional[np.ndarray]:
+    def get_preview_image(
+        self,
+        camera_name: str,
+        pair_number: int,
+        draw_legend: bool = True
+    ) -> Optional[np.ndarray]:
         """Return one combined preview drawn on the first frame."""
         if self.original_folder is None or self.ptv_folder is None:
             return None
@@ -741,7 +748,7 @@ class PTVVisualizer:
         if original_a is None:
             return None
 
-        return self.create_visualization(original_a, pairs)
+        return self.create_visualization(original_a, pairs, draw_legend=draw_legend)
 
     def get_pair_statistics(self, camera_name: str, pair_number: int) -> Optional[Dict]:
         """

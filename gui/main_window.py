@@ -23,10 +23,10 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QProgressBar, QTextEdit, QGroupBox, QFileDialog, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QDialog, QScrollArea, QSplitter
+    QDialog, QSplitter
 )
-from PyQt5.QtCore import QThread, pyqtSignal, Qt
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont
 
 from execute.execute_filter.execute_sort_binarize import (
     SortBinarizeExecutor, SortBinarizeParameters
@@ -680,49 +680,280 @@ def _bgr_to_pixmap(image):
     return QPixmap.fromImage(qimage)
 
 
+class PTVImageView(QWidget):
+    LEGEND_ITEMS = [
+        ("Frame A particles", QColor(0, 255, 0)),
+        ("Frame B positions", QColor(255, 0, 0)),
+        ("Displacement vector", QColor(255, 165, 0)),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap = QPixmap()
+        self._view_rect = QRectF()
+        self._history = []
+        self._drag_start = None
+        self._drag_current = None
+        self.setMinimumSize(360, 260)
+        self.setMouseTracking(True)
+        self.setToolTip("Drag a rectangle to zoom. Right-click or Zoom Out to reduce scale.")
+
+    def set_image(self, image):
+        self._pixmap = _bgr_to_pixmap(image)
+        self._history = []
+        self._drag_start = None
+        self._drag_current = None
+        self.reset_zoom()
+
+    def clear_image(self):
+        self._pixmap = QPixmap()
+        self._view_rect = QRectF()
+        self._history = []
+        self._drag_start = None
+        self._drag_current = None
+        self.update()
+
+    def reset_zoom(self):
+        if self._pixmap.isNull():
+            self.update()
+            return
+        self._view_rect = QRectF(0, 0, self._pixmap.width(), self._pixmap.height())
+        self._history = []
+        self.update()
+
+    def zoom_back(self):
+        if not self._history:
+            return
+        self._view_rect = self._history.pop()
+        self.update()
+
+    def zoom_out(self, factor: float = 1.8):
+        if self._pixmap.isNull() or self._view_rect.isNull():
+            return
+        full = self._full_rect()
+        if self._rects_close(self._view_rect, full):
+            self.reset_zoom()
+            return
+
+        center = self._view_rect.center()
+        expanded = QRectF(
+            center.x() - self._view_rect.width() * factor / 2,
+            center.y() - self._view_rect.height() * factor / 2,
+            self._view_rect.width() * factor,
+            self._view_rect.height() * factor,
+        )
+        self._set_view_rect(expanded, push_history=True)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(10, 10, 10))
+
+        if self._pixmap.isNull() or self._view_rect.isNull():
+            painter.setPen(QColor(180, 180, 180))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Preview")
+            return
+
+        target = self._target_rect()
+        painter.drawPixmap(target, self._pixmap, self._view_rect)
+        self._draw_legend(painter)
+
+        if self._drag_start is not None and self._drag_current is not None:
+            selection = QRectF(self._drag_start, self._drag_current).normalized()
+            selection = selection.intersected(target)
+            if selection.width() > 0 and selection.height() > 0:
+                painter.fillRect(selection, QColor(80, 160, 255, 45))
+                painter.setPen(QPen(QColor(80, 180, 255), 2, Qt.DashLine))
+                painter.drawRect(selection)
+
+    def mousePressEvent(self, event):
+        if self._pixmap.isNull():
+            return
+        if event.button() == Qt.RightButton:
+            self.zoom_out()
+            return
+        if event.button() == Qt.LeftButton and self._target_rect().contains(event.pos()):
+            self._drag_start = event.pos()
+            self._drag_current = event.pos()
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start is None:
+            return
+        self._drag_current = event.pos()
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.LeftButton or self._drag_start is None:
+            return
+
+        target = self._target_rect()
+        selection = QRectF(self._drag_start, event.pos()).normalized().intersected(target)
+        self._drag_start = None
+        self._drag_current = None
+
+        if selection.width() >= 8 and selection.height() >= 8:
+            self._set_view_rect(self._widget_rect_to_source(selection), push_history=True)
+        else:
+            self.update()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.reset_zoom()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._pixmap.isNull() and not self._view_rect.isNull():
+            self._view_rect = self._fit_source_aspect(self._view_rect)
+            self.update()
+
+    def _draw_legend(self, painter: QPainter):
+        painter.save()
+        font = QFont()
+        font.setPointSize(9)
+        painter.setFont(font)
+
+        margin = 10
+        row_h = 22
+        box_w = 215
+        box_h = margin * 2 + row_h * len(self.LEGEND_ITEMS)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(0, 0, 0, 170)))
+        painter.drawRect(0, 0, box_w, box_h)
+
+        for idx, (label, color) in enumerate(self.LEGEND_ITEMS):
+            y = margin + idx * row_h + 15
+            painter.setPen(QPen(color, 2))
+            if idx == 2:
+                painter.drawLine(12, y - 5, 32, y + 5)
+            else:
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(18, y - 7, 10, 10)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(42, y, label)
+
+        painter.restore()
+
+    def _target_rect(self) -> QRectF:
+        if self._pixmap.isNull() or self._view_rect.isNull():
+            return QRectF()
+        viewport = QRectF(self.rect())
+        if viewport.width() <= 0 or viewport.height() <= 0:
+            return QRectF()
+
+        source_aspect = self._view_rect.width() / self._view_rect.height()
+        viewport_aspect = viewport.width() / viewport.height()
+        if source_aspect > viewport_aspect:
+            width = viewport.width()
+            height = width / source_aspect
+        else:
+            height = viewport.height()
+            width = height * source_aspect
+
+        return QRectF(
+            (viewport.width() - width) / 2,
+            (viewport.height() - height) / 2,
+            width,
+            height,
+        )
+
+    def _widget_rect_to_source(self, widget_rect: QRectF) -> QRectF:
+        target = self._target_rect()
+        if target.isNull():
+            return QRectF()
+        left = self._view_rect.left() + (widget_rect.left() - target.left()) / target.width() * self._view_rect.width()
+        top = self._view_rect.top() + (widget_rect.top() - target.top()) / target.height() * self._view_rect.height()
+        right = self._view_rect.left() + (widget_rect.right() - target.left()) / target.width() * self._view_rect.width()
+        bottom = self._view_rect.top() + (widget_rect.bottom() - target.top()) / target.height() * self._view_rect.height()
+        return QRectF(left, top, right - left, bottom - top)
+
+    def _set_view_rect(self, source_rect: QRectF, push_history: bool):
+        if self._pixmap.isNull() or source_rect.isNull():
+            return
+        next_rect = self._fit_source_aspect(source_rect)
+        if next_rect.width() < 2 or next_rect.height() < 2:
+            return
+        if self._rects_close(next_rect, self._view_rect):
+            self.update()
+            return
+        if push_history and not self._view_rect.isNull():
+            self._history.append(QRectF(self._view_rect))
+            self._history = self._history[-25:]
+        self._view_rect = next_rect
+        self.update()
+
+    def _fit_source_aspect(self, source_rect: QRectF) -> QRectF:
+        source_rect = self._clamp_rect(source_rect)
+        if source_rect.isNull() or self.height() <= 0:
+            return source_rect
+
+        viewport_aspect = max(1.0, self.width()) / max(1.0, self.height())
+        rect_aspect = source_rect.width() / source_rect.height()
+        width = source_rect.width()
+        height = source_rect.height()
+        if rect_aspect > viewport_aspect:
+            height = width / viewport_aspect
+        else:
+            width = height * viewport_aspect
+
+        center = source_rect.center()
+        fitted = QRectF(center.x() - width / 2, center.y() - height / 2, width, height)
+        return self._clamp_rect(fitted)
+
+    def _clamp_rect(self, source_rect: QRectF) -> QRectF:
+        full = self._full_rect()
+        if full.isNull():
+            return QRectF()
+
+        width = max(2.0, min(source_rect.width(), full.width()))
+        height = max(2.0, min(source_rect.height(), full.height()))
+        left = source_rect.center().x() - width / 2
+        top = source_rect.center().y() - height / 2
+        left = max(full.left(), min(left, full.right() - width))
+        top = max(full.top(), min(top, full.bottom() - height))
+        return QRectF(left, top, width, height)
+
+    def _full_rect(self) -> QRectF:
+        if self._pixmap.isNull():
+            return QRectF()
+        return QRectF(0, 0, self._pixmap.width(), self._pixmap.height())
+
+    @staticmethod
+    def _rects_close(a: QRectF, b: QRectF) -> bool:
+        return (
+            abs(a.left() - b.left()) < 0.5 and
+            abs(a.top() - b.top()) < 0.5 and
+            abs(a.width() - b.width()) < 0.5 and
+            abs(a.height() - b.height()) < 0.5
+        )
+
+
 class PTVPreviewDialog(QDialog):
     def __init__(self, image, title: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(1200, 800)
-        self._pixmap = _bgr_to_pixmap(image)
-        self._scale = 0.25
 
         layout = QVBoxLayout(self)
         btn_layout = QHBoxLayout()
-        self.zoom_in_btn = QPushButton("Zoom +")
-        self.zoom_out_btn = QPushButton("Zoom -")
-        self.fit_btn = QPushButton("Fit")
-        btn_layout.addWidget(self.zoom_in_btn)
+        self.back_btn = QPushButton("Back")
+        self.zoom_out_btn = QPushButton("Zoom Out")
+        self.reset_btn = QPushButton("Reset")
+        self.back_btn.setToolTip("Return to the previous zoom area")
+        self.zoom_out_btn.setToolTip("Expand the current zoom area around its center")
+        self.reset_btn.setToolTip("Show the full image")
+        btn_layout.addWidget(self.back_btn)
         btn_layout.addWidget(self.zoom_out_btn)
-        btn_layout.addWidget(self.fit_btn)
+        btn_layout.addWidget(self.reset_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_view = PTVImageView()
+        self.image_view.set_image(image)
+        layout.addWidget(self.image_view)
 
-        scroll = QScrollArea()
-        scroll.setWidget(self.image_label)
-        scroll.setWidgetResizable(False)
-        layout.addWidget(scroll)
-
-        self.zoom_in_btn.clicked.connect(lambda: self._set_scale(self._scale * 1.25))
-        self.zoom_out_btn.clicked.connect(lambda: self._set_scale(self._scale / 1.25))
-        self.fit_btn.clicked.connect(lambda: self._set_scale(0.25))
-        self._update_images()
-
-    def _set_scale(self, scale: float):
-        self._scale = max(0.05, min(scale, 4.0))
-        self._update_images()
-
-    def _update_images(self):
-        if self._pixmap.isNull():
-            self.image_label.setText("No image")
-            return
-        size = self._pixmap.size() * self._scale
-        self.image_label.setPixmap(self._pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.image_label.resize(self.image_label.pixmap().size())
+        self.back_btn.clicked.connect(self.image_view.zoom_back)
+        self.zoom_out_btn.clicked.connect(self.image_view.zoom_out)
+        self.reset_btn.clicked.connect(self.image_view.reset_zoom)
 
 
 class PTVViewerTab(QWidget):
@@ -748,13 +979,25 @@ class PTVViewerTab(QWidget):
         self.preview_btn = QPushButton("Preview Selected")
         self.open_btn = QPushButton("Open Large")
         self.save_btn = QPushButton("Save Selected")
+        self.back_btn = QPushButton("Back")
+        self.zoom_out_btn = QPushButton("Zoom Out")
+        self.reset_zoom_btn = QPushButton("Reset")
         self.preview_btn.setEnabled(False)
         self.open_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
+        self.back_btn.setEnabled(False)
+        self.zoom_out_btn.setEnabled(False)
+        self.reset_zoom_btn.setEnabled(False)
+        self.back_btn.setToolTip("Return to the previous zoom area")
+        self.zoom_out_btn.setToolTip("Expand the current zoom area around its center")
+        self.reset_zoom_btn.setToolTip("Show the full image")
         btn_layout.addWidget(self.scan_btn)
         btn_layout.addWidget(self.preview_btn)
         btn_layout.addWidget(self.open_btn)
         btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.back_btn)
+        btn_layout.addWidget(self.zoom_out_btn)
+        btn_layout.addWidget(self.reset_zoom_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
@@ -778,9 +1021,8 @@ class PTVViewerTab(QWidget):
         self.info_label = QLabel("Select a pair")
         preview_layout.addWidget(self.info_label)
 
-        self.preview_image = QLabel("Preview")
-        self.preview_image.setAlignment(Qt.AlignCenter)
-        preview_layout.addWidget(self.preview_image)
+        self.preview_view = PTVImageView()
+        preview_layout.addWidget(self.preview_view)
         splitter.addWidget(preview_panel)
         splitter.setSizes([520, 480])
         layout.addWidget(splitter)
@@ -794,6 +1036,9 @@ class PTVViewerTab(QWidget):
         self.preview_btn.clicked.connect(self._preview_selected)
         self.open_btn.clicked.connect(self._open_large)
         self.save_btn.clicked.connect(self._save_selected)
+        self.back_btn.clicked.connect(self.preview_view.zoom_back)
+        self.zoom_out_btn.clicked.connect(self.preview_view.zoom_out)
+        self.reset_zoom_btn.clicked.connect(self.preview_view.reset_zoom)
         self.table.itemSelectionChanged.connect(self._preview_selected)
         self.table.itemDoubleClicked.connect(lambda _item: self._open_large())
 
@@ -833,6 +1078,9 @@ class PTVViewerTab(QWidget):
         self.preview_btn.setEnabled(bool(self._records) and visualizer_ready)
         self.save_btn.setEnabled(bool(self._records) and visualizer_ready)
         self.open_btn.setEnabled(self._preview_image is not None)
+        self.back_btn.setEnabled(self._preview_image is not None)
+        self.zoom_out_btn.setEnabled(self._preview_image is not None)
+        self.reset_zoom_btn.setEnabled(self._preview_image is not None)
         self._log(self.status_label.text())
 
     def _populate_table(self):
@@ -880,14 +1128,24 @@ class PTVViewerTab(QWidget):
             self.info_label.setText("Source images are missing")
             self._set_preview_labels(None)
             self.open_btn.setEnabled(False)
+            self.back_btn.setEnabled(False)
+            self.zoom_out_btn.setEnabled(False)
+            self.reset_zoom_btn.setEnabled(False)
             return
 
-        preview = self._visualizer.get_preview_image(record.camera, record.pair_number)
+        preview = self._visualizer.get_preview_image(
+            record.camera,
+            record.pair_number,
+            draw_legend=False,
+        )
         self._preview_image = preview
         if preview is None:
             self.info_label.setText("Preview failed")
             self._set_preview_labels(None)
             self.open_btn.setEnabled(False)
+            self.back_btn.setEnabled(False)
+            self.zoom_out_btn.setEnabled(False)
+            self.reset_zoom_btn.setEnabled(False)
             return
 
         self.info_label.setText(
@@ -896,14 +1154,15 @@ class PTVViewerTab(QWidget):
         )
         self._set_preview_labels(preview)
         self.open_btn.setEnabled(True)
+        self.back_btn.setEnabled(True)
+        self.zoom_out_btn.setEnabled(True)
+        self.reset_zoom_btn.setEnabled(True)
 
     def _set_preview_labels(self, preview):
         if preview is None:
-            self.preview_image.setPixmap(QPixmap())
-            self.preview_image.setText("Preview")
+            self.preview_view.clear_image()
             return
-        pixmap = _bgr_to_pixmap(preview)
-        self.preview_image.setPixmap(pixmap.scaled(520, 520, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.preview_view.set_image(preview)
 
     def _open_large(self):
         record = self._selected_record()
