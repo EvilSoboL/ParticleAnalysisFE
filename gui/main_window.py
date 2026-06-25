@@ -1203,6 +1203,47 @@ class PTVViewerTab(QWidget):
         self.log_text.append(text)
 
 
+class VectorFilterBatchResult:
+    def __init__(self, results):
+        self.results = results
+        self.success = bool(results) and all(result.success for _camera, result in results)
+        self.input_vectors = sum(result.input_vectors for _camera, result in results)
+        self.output_vectors = sum(result.output_vectors for _camera, result in results)
+        self.vectors_removed = sum(result.vectors_removed for _camera, result in results)
+        self.removal_percentage = (
+            self.vectors_removed / self.input_vectors * 100 if self.input_vectors else 0.0
+        )
+        self.u_min_filtered = sum(result.u_min_filtered for _camera, result in results)
+        self.u_max_filtered = sum(result.u_max_filtered for _camera, result in results)
+        self.v_min_filtered = sum(result.v_min_filtered for _camera, result in results)
+        self.v_max_filtered = sum(result.v_max_filtered for _camera, result in results)
+        self.errors = [
+            f"{camera}: {error}"
+            for camera, result in results
+            for error in result.errors
+        ]
+        self.output_files = [(camera, result.output_file) for camera, result in results if result.output_file]
+        self.output_file = "; ".join(output_file for _camera, output_file in self.output_files)
+
+
+class VectorFilterBatchExecutor:
+    def __init__(self, jobs):
+        self.jobs = jobs
+
+    def execute(self):
+        results = []
+        for camera, params in self.jobs:
+            executor = VectorFilterExecutor()
+            ok, msg = executor.set_parameters(params)
+            if not ok:
+                failed = VectorFilterBatchResult(results)
+                failed.success = False
+                failed.errors.append(f"{camera}: {msg}")
+                return failed
+            results.append((camera, executor.execute()))
+        return VectorFilterBatchResult(results)
+
+
 class PTVProcessingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1217,8 +1258,10 @@ class PTVProcessingTab(QWidget):
         filt_group = QGroupBox("1. Vector Filter")
         filt_layout = QVBoxLayout(filt_group)
 
-        f_row, self.filt_file_line = _file_row("Input CSV:", self)
-        filt_layout.addLayout(f_row)
+        f_cam1_row, self.filt_cam1_file_line = _file_row("cam_1 CSV:", self)
+        filt_layout.addLayout(f_cam1_row)
+        f_cam2_row, self.filt_cam2_file_line = _file_row("cam_2 CSV:", self)
+        filt_layout.addLayout(f_cam2_row)
 
         # U range
         h_u = QHBoxLayout()
@@ -1368,34 +1411,43 @@ class PTVProcessingTab(QWidget):
 
     # ---- Run Filter ----
     def _run_filter(self):
-        csv_path = self.filt_file_line.text().strip()
-        if not csv_path:
-            QMessageBox.warning(self, "Warning", "Select input CSV file.")
+        input_paths = [
+            ("cam_1", self.filt_cam1_file_line.text().strip()),
+            ("cam_2", self.filt_cam2_file_line.text().strip()),
+        ]
+        jobs = []
+        for camera, csv_path in input_paths:
+            if not csv_path:
+                continue
+            params = VectorFilterParameters(
+                input_file=csv_path,
+                filter_u=self.filter_u_cb.isChecked(),
+                u_min=self.u_min_spin.value(),
+                u_max=self.u_max_spin.value(),
+                filter_v=self.filter_v_cb.isChecked(),
+                v_min=self.v_min_spin.value(),
+                v_max=self.v_max_spin.value(),
+            )
+            ok, msg = params.validate()
+            if not ok:
+                QMessageBox.critical(self, "Error", f"{camera}: {msg}")
+                return
+            jobs.append((camera, params))
+
+        if not jobs:
+            QMessageBox.warning(self, "Warning", "Select cam_1 and/or cam_2 input CSV file.")
             return
 
-        params = VectorFilterParameters(
-            input_file=csv_path,
-            filter_u=self.filter_u_cb.isChecked(),
-            u_min=self.u_min_spin.value(),
-            u_max=self.u_max_spin.value(),
-            filter_v=self.filter_v_cb.isChecked(),
-            v_min=self.v_min_spin.value(),
-            v_max=self.v_max_spin.value(),
-        )
-
-        self._executor = VectorFilterExecutor()
-        ok, msg = self._executor.set_parameters(params)
-        if not ok:
-            QMessageBox.critical(self, "Error", msg)
-            return
+        self._executor = VectorFilterBatchExecutor(jobs)
 
         self.log_text.clear()
         self._log("Starting Vector Filter...")
-        self._log(f"  Input: {csv_path}")
-        if params.filter_u:
-            self._log(f"  U: [{params.u_min}, {params.u_max}]")
-        if params.filter_v:
-            self._log(f"  V: [{params.v_min}, {params.v_max}]")
+        for camera, params in jobs:
+            self._log(f"  {camera}: {params.input_file}")
+        if self.filter_u_cb.isChecked():
+            self._log(f"  U: [{self.u_min_spin.value()}, {self.u_max_spin.value()}]")
+        if self.filter_v_cb.isChecked():
+            self._log(f"  V: [{self.v_min_spin.value()}, {self.v_max_spin.value()}]")
         self._log("")
         self._start_worker()
 
@@ -1493,7 +1545,11 @@ class PTVProcessingTab(QWidget):
             self._log(f"Input vectors: {result.input_vectors}")
             self._log(f"Output vectors: {result.output_vectors}")
             self._log(f"Removed: {result.vectors_removed} ({result.removal_percentage:.1f}%)")
-            self._log(f"Output file: {result.output_file}")
+            if hasattr(result, 'output_files'):
+                for camera, output_file in result.output_files:
+                    self._log(f"{camera} output file: {output_file}")
+            else:
+                self._log(f"Output file: {result.output_file}")
 
         # VectorAverageResult
         elif hasattr(result, 'output_cells'):
