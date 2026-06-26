@@ -2703,6 +2703,50 @@ class VectorPlotDialog(QDialog):
 
         return status_lines, crop_applied
 
+    def _axis_crop_mask(self, x, y):
+        mask = np.ones(len(x), dtype=bool)
+
+        if self.crop_x_cb.isChecked():
+            x_min = min(self.x_min_spin.value(), self.x_max_spin.value())
+            x_max = max(self.x_min_spin.value(), self.x_max_spin.value())
+            if not math.isclose(x_min, x_max):
+                mask &= (x >= x_min) & (x <= x_max)
+
+        if self.crop_y_cb.isChecked():
+            y_min = min(self.y_min_spin.value(), self.y_max_spin.value())
+            y_max = max(self.y_min_spin.value(), self.y_max_spin.value())
+            if not math.isclose(y_min, y_max):
+                mask &= (y >= y_min) & (y <= y_max)
+
+        return mask
+
+    @staticmethod
+    def _format_csv_value(value):
+        return f"{float(value):.10g}"
+
+    def _save_current_csv(self, csv_path):
+        x, y, dx, dy, length, *_labels, unit = self._transformed_vectors()
+        mask = self._axis_crop_mask(x, y)
+        x = x[mask]
+        y = y[mask]
+        dx = dx[mask]
+        dy = dy[mask]
+        length = length[mask]
+        angle = np.degrees(np.arctan2(dy, dx))
+
+        if unit == "px":
+            fieldnames = ["X0", "Y0", "dx", "dy", "L", "angle_deg"]
+        else:
+            fieldnames = ["X_mm", "Y_mm", "dx_ms", "dy_ms", "L_ms", "angle_deg"]
+
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f, delimiter=";")
+            writer.writerow(fieldnames)
+            for row in zip(x, y, dx, dy, length, angle):
+                writer.writerow([self._format_csv_value(value) for value in row])
+
+        return len(x)
+
     def _pick_origin_toggled(self, checked):
         if self._source_mode == "physical":
             self.pick_origin_btn.blockSignals(True)
@@ -2901,8 +2945,20 @@ class VectorPlotDialog(QDialog):
         )
         if not file_path:
             return
-        self.figure.savefig(file_path, dpi=150, bbox_inches="tight")
-        self.status_label.setText(f"Сохранено: {file_path}")
+        png_path = Path(file_path)
+        csv_path = png_path.with_suffix(".csv")
+        self.figure.savefig(str(png_path), dpi=150, bbox_inches="tight")
+        try:
+            vector_count = self._save_current_csv(csv_path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Ошибка", f"PNG сохранён, но CSV сохранить не удалось:\n{exc}")
+            self.status_label.setText(f"Сохранено: {png_path}\nCSV не сохранён: {exc}")
+            return
+        self.status_label.setText(
+            f"Сохранено: {png_path}\n"
+            f"CSV: {csv_path}\n"
+            f"Векторов в CSV: {vector_count}"
+        )
 
 
 class VectorGraphicsTab(QWidget):
