@@ -830,12 +830,14 @@ class PTVImageView(QWidget):
         self._history = []
         self._drag_start = None
         self._drag_current = None
+        self._show_legend = True
         self.setMinimumSize(360, 260)
         self.setMouseTracking(True)
         self.setToolTip("Выделите область мышью для увеличения. Правый клик или «Уменьшить» снижает масштаб.")
 
-    def set_image(self, image):
+    def set_image(self, image, show_legend: bool = True):
         self._pixmap = _bgr_to_pixmap(image)
+        self._show_legend = show_legend
         self._history = []
         self._drag_start = None
         self._drag_current = None
@@ -891,7 +893,8 @@ class PTVImageView(QWidget):
 
         target = self._target_rect()
         painter.drawPixmap(target, self._pixmap, self._view_rect)
-        self._draw_legend(painter)
+        if self._show_legend:
+            self._draw_legend(painter)
 
         if self._drag_start is not None and self._drag_current is not None:
             selection = QRectF(self._drag_start, self._drag_current).normalized()
@@ -1114,11 +1117,24 @@ class PTVHistogramDialog(QDialog):
             self.metric_combo.addItem(spec["label"], key)
         params_layout.addWidget(self.metric_combo)
 
-        params_layout.addWidget(QLabel("Бары:"))
-        self.bins_spin = QSpinBox()
-        self.bins_spin.setRange(1, 500)
-        self.bins_spin.setValue(20)
-        params_layout.addWidget(self.bins_spin)
+        params_layout.addWidget(QLabel("Ширина бара:"))
+        self.bin_width_spin = QDoubleSpinBox()
+        self.bin_width_spin.setRange(0.001, 1000000.0)
+        self.bin_width_spin.setDecimals(3)
+        self.bin_width_spin.setSingleStep(1.0)
+        self.bin_width_spin.setValue(5.0)
+        self.bin_width_spin.setKeyboardTracking(False)
+        params_layout.addWidget(self.bin_width_spin)
+        self.bin_width_preset_combo = QComboBox()
+        self.bin_width_preset_combo.addItem("1", 1.0)
+        self.bin_width_preset_combo.addItem("2", 2.0)
+        self.bin_width_preset_combo.addItem("5", 5.0)
+        self.bin_width_preset_combo.addItem("10", 10.0)
+        self.bin_width_preset_combo.addItem("20", 20.0)
+        self.bin_width_preset_combo.setCurrentIndex(2)
+        params_layout.addWidget(self.bin_width_preset_combo)
+        self.bin_width_unit_label = QLabel("px")
+        params_layout.addWidget(self.bin_width_unit_label)
 
         self.range_cb = QCheckBox("Диапазон вручную")
         params_layout.addWidget(self.range_cb)
@@ -1154,7 +1170,8 @@ class PTVHistogramDialog(QDialog):
         layout.addWidget(self.image_view)
 
         self.metric_combo.currentIndexChanged.connect(self._metric_changed)
-        self.bins_spin.valueChanged.connect(self._redraw)
+        self.bin_width_spin.valueChanged.connect(self._redraw)
+        self.bin_width_preset_combo.currentIndexChanged.connect(self._preset_width_changed)
         self.range_cb.toggled.connect(self._range_toggled)
         self.min_spin.valueChanged.connect(self._redraw)
         self.max_spin.valueChanged.connect(self._redraw)
@@ -1163,8 +1180,20 @@ class PTVHistogramDialog(QDialog):
         self._update_range_controls()
 
     def _metric_changed(self):
+        self._update_bin_width_unit()
         self._fill_range_from_data()
         self._redraw()
+
+    def _update_bin_width_unit(self):
+        metric_key = self.metric_combo.currentData()
+        spec = self.viewer_tab.HISTOGRAM_METRICS.get(metric_key, self.viewer_tab.HISTOGRAM_METRICS["Diameter"])
+        self.bin_width_unit_label.setText(spec["unit"])
+
+    def _preset_width_changed(self):
+        width = self.bin_width_preset_combo.currentData()
+        if width is None:
+            return
+        self.bin_width_spin.setValue(float(width))
 
     def _range_toggled(self):
         self._update_range_controls()
@@ -1210,11 +1239,11 @@ class PTVHistogramDialog(QDialog):
         image, summary = self.viewer_tab._create_histogram_image(
             self.record,
             metric_key=self.metric_combo.currentData(),
-            bins=self.bins_spin.value(),
+            bin_width=self.bin_width_spin.value(),
             value_range=self._histogram_range(),
         )
         self._current_image = image
-        self.image_view.set_image(image)
+        self.image_view.set_image(image, show_legend=False)
         self.status_label.setText(summary)
 
     def _browse_folder(self):
@@ -1233,7 +1262,7 @@ class PTVHistogramDialog(QDialog):
                 self.record,
                 folder,
                 metric_key=self.metric_combo.currentData(),
-                bins=self.bins_spin.value(),
+                bin_width=self.bin_width_spin.value(),
                 value_range=self._histogram_range(),
             )
         except OSError as exc:
@@ -1505,17 +1534,17 @@ class PTVViewerTab(QWidget):
         self._update_action_buttons()
 
     def _preview_histogram_selected(self, record):
-        image, summary = self._create_histogram_image(record)
+        image, summary = self._create_histogram_image(record, bin_width=5.0)
         self._preview_image = image
         self.info_label.setText(summary)
-        self._set_preview_labels(image)
+        self._set_preview_labels(image, show_legend=False)
         self._update_action_buttons()
 
-    def _set_preview_labels(self, preview):
+    def _set_preview_labels(self, preview, show_legend: bool = True):
         if preview is None:
             self.preview_view.clear_image()
             return
-        self.preview_view.set_image(preview)
+        self.preview_view.set_image(preview, show_legend=show_legend)
 
     @staticmethod
     def _to_float_value(value):
@@ -1535,7 +1564,27 @@ class PTVViewerTab(QWidget):
             return np.array([], dtype=float)
         return np.array(values, dtype=float)
 
-    def _create_histogram_image(self, record, metric_key="Diameter", bins=20, value_range=None):
+    @staticmethod
+    def _histogram_edges(values, bin_width, value_range=None):
+        width = max(float(bin_width), 1e-9)
+        if value_range is None:
+            min_value = float(np.min(values))
+            max_value = float(np.max(values))
+            start = math.floor(min_value / width) * width
+            stop = math.ceil(max_value / width) * width
+        else:
+            start, stop = value_range
+            start = float(start)
+            stop = float(stop)
+
+        if math.isclose(start, stop):
+            stop = start + width
+        if stop < start:
+            start, stop = stop, start
+        edge_count = max(2, int(math.ceil((stop - start) / width)) + 1)
+        return start + np.arange(edge_count, dtype=float) * width
+
+    def _create_histogram_image(self, record, metric_key="Diameter", bin_width=5.0, value_range=None):
         spec = self.HISTOGRAM_METRICS.get(metric_key, self.HISTOGRAM_METRICS["Diameter"])
         values = self._histogram_values(record, metric_key)
 
@@ -1549,10 +1598,10 @@ class PTVViewerTab(QWidget):
             ax.set_axis_off()
             summary = f"{title}: нет данных"
         else:
+            edges = self._histogram_edges(values, bin_width, value_range)
             ax.hist(
                 values,
-                bins=max(1, int(bins)),
-                range=value_range,
+                bins=edges,
                 color="#2f80ed",
                 edgecolor="white",
                 linewidth=0.8,
@@ -1569,7 +1618,7 @@ class PTVViewerTab(QWidget):
             summary = (
                 f"{title}: частиц {values.size}, "
                 f"min={np.min(values):.2f}, max={np.max(values):.2f}, "
-                f"mean={mean_value:.2f}"
+                f"mean={mean_value:.2f}, бар={float(bin_width):.3g} {spec['unit']}"
             )
 
         ax.set_title(title)
@@ -1590,13 +1639,13 @@ class PTVViewerTab(QWidget):
         safe_metric = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in str(metric_key))
         return f"histogram_{record.camera}_pair_{record.pair_number}_{safe_metric}.png"
 
-    def _save_histogram_png(self, record, folder, metric_key="Diameter", bins=20, value_range=None):
+    def _save_histogram_png(self, record, folder, metric_key="Diameter", bin_width=5.0, value_range=None):
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         image, _summary = self._create_histogram_image(
             record,
             metric_key=metric_key,
-            bins=bins,
+            bin_width=bin_width,
             value_range=value_range,
         )
         output_path = folder / self._histogram_filename(record, metric_key)
