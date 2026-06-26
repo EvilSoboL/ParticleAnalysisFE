@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QProgressBar, QTextEdit, QGroupBox, QFileDialog, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QDialog, QSplitter
+    QDialog, QSplitter, QSizePolicy
 )
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont
@@ -884,10 +884,11 @@ class PTVImageView(QWidget):
 
     def paintEvent(self, _event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(10, 10, 10))
+        background = QColor(10, 10, 10) if self._show_legend else QColor(255, 255, 255)
+        painter.fillRect(self.rect(), background)
 
         if self._pixmap.isNull() or self._view_rect.isNull():
-            painter.setPen(QColor(180, 180, 180))
+            painter.setPen(QColor(180, 180, 180) if self._show_legend else QColor(80, 80, 80))
             painter.drawText(self.rect(), Qt.AlignCenter, "Предпросмотр")
             return
 
@@ -1122,7 +1123,7 @@ class PTVHistogramDialog(QDialog):
         self.bin_width_spin.setRange(0.001, 1000000.0)
         self.bin_width_spin.setDecimals(3)
         self.bin_width_spin.setSingleStep(1.0)
-        self.bin_width_spin.setValue(5.0)
+        self.bin_width_spin.setValue(1.0)
         self.bin_width_spin.setKeyboardTracking(False)
         params_layout.addWidget(self.bin_width_spin)
         self.bin_width_preset_combo = QComboBox()
@@ -1131,7 +1132,7 @@ class PTVHistogramDialog(QDialog):
         self.bin_width_preset_combo.addItem("5", 5.0)
         self.bin_width_preset_combo.addItem("10", 10.0)
         self.bin_width_preset_combo.addItem("20", 20.0)
-        self.bin_width_preset_combo.setCurrentIndex(2)
+        self.bin_width_preset_combo.setCurrentIndex(0)
         params_layout.addWidget(self.bin_width_preset_combo)
         self.bin_width_unit_label = QLabel("px")
         params_layout.addWidget(self.bin_width_unit_label)
@@ -1164,10 +1165,14 @@ class PTVHistogramDialog(QDialog):
         layout.addLayout(save_layout)
 
         self.status_label = QLabel("Готово")
+        self.status_label.setWordWrap(False)
+        self.status_label.setMaximumHeight(28)
+        self.status_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         layout.addWidget(self.status_label)
 
         self.image_view = PTVImageView()
-        layout.addWidget(self.image_view)
+        self.image_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self.image_view, 1)
 
         self.metric_combo.currentIndexChanged.connect(self._metric_changed)
         self.bin_width_spin.valueChanged.connect(self._redraw)
@@ -1534,7 +1539,7 @@ class PTVViewerTab(QWidget):
         self._update_action_buttons()
 
     def _preview_histogram_selected(self, record):
-        image, summary = self._create_histogram_image(record, bin_width=5.0)
+        image, summary = self._create_histogram_image(record, bin_width=1.0)
         self._preview_image = image
         self.info_label.setText(summary)
         self._set_preview_labels(image, show_legend=False)
@@ -1584,7 +1589,7 @@ class PTVViewerTab(QWidget):
         edge_count = max(2, int(math.ceil((stop - start) / width)) + 1)
         return start + np.arange(edge_count, dtype=float) * width
 
-    def _create_histogram_image(self, record, metric_key="Diameter", bin_width=5.0, value_range=None):
+    def _create_histogram_image(self, record, metric_key="Diameter", bin_width=1.0, value_range=None):
         spec = self.HISTOGRAM_METRICS.get(metric_key, self.HISTOGRAM_METRICS["Diameter"])
         values = self._histogram_values(record, metric_key)
 
@@ -1639,7 +1644,7 @@ class PTVViewerTab(QWidget):
         safe_metric = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in str(metric_key))
         return f"histogram_{record.camera}_pair_{record.pair_number}_{safe_metric}.png"
 
-    def _save_histogram_png(self, record, folder, metric_key="Diameter", bin_width=5.0, value_range=None):
+    def _save_histogram_png(self, record, folder, metric_key="Diameter", bin_width=1.0, value_range=None):
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         image, _summary = self._create_histogram_image(
