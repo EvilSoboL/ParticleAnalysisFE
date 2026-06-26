@@ -453,7 +453,7 @@ class SortBinarizeTab(QWidget):
         layout.addLayout(h)
 
         median_layout = QHBoxLayout()
-        self.median_filter_cb = QCheckBox("Медианный фильтр перед порогом")
+        self.median_filter_cb = QCheckBox("Медианная фильтрация исходного изображения")
         self.median_kernel_combo = QComboBox()
         self.median_kernel_combo.addItem("3x3", 3)
         self.median_kernel_combo.addItem("5x5", 5)
