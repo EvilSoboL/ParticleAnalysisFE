@@ -2203,6 +2203,12 @@ class VectorPlotDialog(QDialog):
         self._source_mode = "raw"
         self._load_error = ""
         self._origin_confirmed = False
+        self._pick_preview = None
+        self._plot_ax = None
+        self._origin_vline = None
+        self._origin_hline = None
+        self._origin_marker = None
+        self._origin_text_artist = None
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
         self._redraw_timer.timeout.connect(self._draw_plot)
@@ -2367,6 +2373,7 @@ class VectorPlotDialog(QDialog):
         self.confirm_origin_btn.clicked.connect(self._confirm_origin)
         self.save_btn.clicked.connect(self._save_png)
         self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
+        self.canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
 
     def _load_csv(self):
         if not self.csv_path.exists():
@@ -2415,9 +2422,101 @@ class VectorPlotDialog(QDialog):
     def _to_float(value):
         return float(str(value).replace(",", "."))
 
+    def _is_pixel_origin_view(self):
+        return self._source_mode != "physical" and self.units_combo.currentIndex() == 0
+
+    def _origin_display_point(self):
+        if self.pick_origin_btn.isChecked() and self._pick_preview is not None:
+            return self._pick_preview
+        return self.x_origin_spin.value(), self.y_origin_spin.value()
+
+    @staticmethod
+    def _format_origin_text(x, y):
+        return f"X={x:.1f} px\nY={y:.1f} px"
+
+    @staticmethod
+    def _origin_text_position(ax, x, y):
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+        x_mid = (min(x0, x1) + max(x0, x1)) / 2.0
+        y_mid = (min(y0, y1) + max(y0, y1)) / 2.0
+        x_offset = 10 if x <= x_mid else -10
+        y_offset = 10 if y <= y_mid else -10
+        ha = "left" if x_offset > 0 else "right"
+        va = "bottom" if y_offset > 0 else "top"
+        return x_offset, y_offset, ha, va
+
+    def _draw_origin_cursor(self, ax):
+        x, y = self._origin_display_point()
+        self._origin_vline = ax.axvline(
+            x,
+            color="red",
+            linewidth=1.2,
+            alpha=0.85,
+            zorder=4,
+        )
+        self._origin_hline = ax.axhline(
+            y,
+            color="red",
+            linewidth=1.2,
+            alpha=0.85,
+            zorder=4,
+        )
+        self._origin_marker = ax.scatter(
+            [x],
+            [y],
+            marker="+",
+            s=180,
+            c="red",
+            linewidths=2.0,
+            zorder=5,
+        )
+        x_offset, y_offset, ha, va = self._origin_text_position(ax, x, y)
+        self._origin_text_artist = ax.annotate(
+            self._format_origin_text(x, y),
+            xy=(x, y),
+            xytext=(x_offset, y_offset),
+            textcoords="offset points",
+            color="red",
+            fontsize=9,
+            ha=ha,
+            va=va,
+            bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "red", "alpha": 0.85},
+            zorder=6,
+        )
+
+    def _update_origin_cursor(self, x, y):
+        if not all((self._plot_ax, self._origin_vline, self._origin_hline, self._origin_marker, self._origin_text_artist)):
+            self._schedule_redraw()
+            return
+
+        self._origin_vline.set_xdata([x, x])
+        self._origin_hline.set_ydata([y, y])
+        self._origin_marker.set_offsets(np.array([[x, y]], dtype=float))
+        self._origin_text_artist.xy = (x, y)
+        self._origin_text_artist.set_text(self._format_origin_text(x, y))
+        x_offset, y_offset, ha, va = self._origin_text_position(self._plot_ax, x, y)
+        self._origin_text_artist.set_position((x_offset, y_offset))
+        self._origin_text_artist.set_ha(ha)
+        self._origin_text_artist.set_va(va)
+        self.canvas.draw_idle()
+
+    def _is_valid_origin_event(self, event):
+        return (
+            self.pick_origin_btn.isChecked()
+            and self._is_pixel_origin_view()
+            and event.inaxes is self._plot_ax
+            and event.xdata is not None
+            and event.ydata is not None
+        )
+
     def _origin_changed(self, *_args):
         if self._source_mode != "physical":
             self._origin_confirmed = False
+            if self.pick_origin_btn.isChecked():
+                self._pick_preview = (self.x_origin_spin.value(), self.y_origin_spin.value())
+            else:
+                self._pick_preview = None
             if self.rotation_spin.value() != 0:
                 self.rotation_spin.blockSignals(True)
                 self.rotation_spin.setValue(0)
@@ -2441,21 +2540,20 @@ class VectorPlotDialog(QDialog):
             self.pick_origin_btn.blockSignals(True)
             self.pick_origin_btn.setChecked(False)
             self.pick_origin_btn.blockSignals(False)
+            self._pick_preview = None
             return
 
         if checked:
             if self.units_combo.currentIndex() != 0:
                 self.units_combo.setCurrentIndex(0)
+            self._pick_preview = (self.x_origin_spin.value(), self.y_origin_spin.value())
             self.status_label.setText("Кликните по точке origin на графике в пикселях.")
+        else:
+            self._pick_preview = None
+        self._schedule_redraw()
 
     def _on_canvas_click(self, event):
-        if (
-            not self.pick_origin_btn.isChecked()
-            or self._source_mode == "physical"
-            or event.inaxes is None
-            or event.xdata is None
-            or event.ydata is None
-        ):
+        if not self._is_valid_origin_event(event):
             return
 
         self.x_origin_spin.blockSignals(True)
@@ -2474,6 +2572,14 @@ class VectorPlotDialog(QDialog):
         self._update_source_controls()
         self._schedule_redraw()
 
+    def _on_canvas_motion(self, event):
+        if not self._is_valid_origin_event(event):
+            return
+        x = float(event.xdata)
+        y = float(event.ydata)
+        self._pick_preview = (x, y)
+        self._update_origin_cursor(x, y)
+
     def _update_source_controls(self):
         is_physical = self._source_mode == "physical"
         if is_physical:
@@ -2486,6 +2592,7 @@ class VectorPlotDialog(QDialog):
             self.pick_origin_btn.blockSignals(True)
             self.pick_origin_btn.setChecked(False)
             self.pick_origin_btn.blockSignals(False)
+            self._pick_preview = None
 
         self.units_combo.setEnabled(not is_physical)
         self.x_origin_spin.setEnabled(not is_physical)
@@ -2542,8 +2649,14 @@ class VectorPlotDialog(QDialog):
         return x_mm, y_mm, dx_ms, dy_ms, l_ms, "X (мм)", "Y (мм)", "м/с"
 
     def _draw_plot(self):
+        self._plot_ax = None
+        self._origin_vline = None
+        self._origin_hline = None
+        self._origin_marker = None
+        self._origin_text_artist = None
         self.figure.clear()
         ax = self.figure.add_subplot(111)
+        self._plot_ax = ax
 
         if self._load_error:
             ax.text(0.5, 0.5, self._load_error, ha="center", va="center", wrap=True)
@@ -2584,23 +2697,15 @@ class VectorPlotDialog(QDialog):
         ax.set_aspect("equal", adjustable="datalim")
         ax.grid(True, alpha=0.3)
         if self._source_mode != "physical" and self.units_combo.currentIndex() == 0:
-            ax.scatter(
-                [self.x_origin_spin.value()],
-                [self.y_origin_spin.value()],
-                marker="+",
-                s=140,
-                c="red",
-                linewidths=2.0,
-                label="origin",
-                zorder=5,
-            )
-            ax.legend(loc="upper left", framealpha=0.9)
+            self._draw_origin_cursor(ax)
         self.figure.tight_layout()
         self.canvas.draw_idle()
 
         status_lines = []
         if self.pick_origin_btn.isChecked():
             status_lines.append("Кликните по точке origin на графике в пикселях")
+            preview_x, preview_y = self._origin_display_point()
+            status_lines.append(f"курсор: X={preview_x:.1f} px, Y={preview_y:.1f} px")
         if self._source_mode != "physical":
             status_lines.append(
                 f"origin: X={self.x_origin_spin.value():.1f} px, "
