@@ -12,6 +12,11 @@ import sys
 import traceback
 from pathlib import Path
 import cv2
+import csv
+import math
+import numpy as np
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 # Добавление корня проекта в sys.path
 project_root = str(Path(__file__).parent.parent)
@@ -25,7 +30,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QDialog, QSplitter
 )
-from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF
+from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont
 
 from execute.execute_filter.execute_sort_binarize import (
@@ -1782,7 +1787,7 @@ class PTVProcessingTab(QWidget):
 # ---------------------------------------------------------------------------
 # Tab 4: Vector Graphics
 # ---------------------------------------------------------------------------
-class VectorGraphicsTab(QWidget):
+class LegacyVectorGraphicsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
@@ -2190,6 +2195,499 @@ class VectorGraphicsTab(QWidget):
 # ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
+class VectorPlotDialog(QDialog):
+    def __init__(self, csv_path: str, parent=None):
+        super().__init__(parent)
+        self.csv_path = Path(csv_path)
+        self._vectors = np.empty((0, 5), dtype=float)
+        self._source_mode = "raw"
+        self._load_error = ""
+        self._origin_confirmed = False
+        self._redraw_timer = QTimer(self)
+        self._redraw_timer.setSingleShot(True)
+        self._redraw_timer.timeout.connect(self._draw_plot)
+
+        self.setWindowTitle(f"Векторный график: {self.csv_path.name}")
+        self.resize(1150, 720)
+        self._init_ui()
+        self._load_csv()
+        self._update_source_controls()
+        self._connect_controls()
+        self._schedule_redraw()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        header = QHBoxLayout()
+        file_label = QLabel("CSV:")
+        file_label.setFixedWidth(50)
+        self.file_line = QLineEdit(str(self.csv_path))
+        self.file_line.setReadOnly(True)
+        self.save_btn = QPushButton("Сохранить PNG")
+        header.addWidget(file_label)
+        header.addWidget(self.file_line)
+        header.addWidget(self.save_btn)
+        layout.addLayout(header)
+
+        splitter = QSplitter(Qt.Horizontal)
+        controls = QWidget()
+        controls.setMaximumWidth(340)
+        controls_layout = QVBoxLayout(controls)
+
+        transform_group = QGroupBox("Преобразование")
+        transform_layout = QVBoxLayout(transform_group)
+
+        origin_row = QHBoxLayout()
+        origin_row.addWidget(QLabel("X_origin (px):"))
+        self.x_origin_spin = QDoubleSpinBox()
+        self.x_origin_spin.setRange(-100000.0, 100000.0)
+        self.x_origin_spin.setDecimals(1)
+        origin_row.addWidget(self.x_origin_spin)
+        transform_layout.addLayout(origin_row)
+
+        y_origin_row = QHBoxLayout()
+        y_origin_row.addWidget(QLabel("Y_origin (px):"))
+        self.y_origin_spin = QDoubleSpinBox()
+        self.y_origin_spin.setRange(-100000.0, 100000.0)
+        self.y_origin_spin.setDecimals(1)
+        y_origin_row.addWidget(self.y_origin_spin)
+        transform_layout.addLayout(y_origin_row)
+
+        origin_actions_row = QHBoxLayout()
+        self.pick_origin_btn = QPushButton("Выбрать origin")
+        self.pick_origin_btn.setCheckable(True)
+        self.confirm_origin_btn = QPushButton("Зафиксировать origin")
+        origin_actions_row.addWidget(self.pick_origin_btn)
+        origin_actions_row.addWidget(self.confirm_origin_btn)
+        transform_layout.addLayout(origin_actions_row)
+
+        self.origin_state_label = QLabel("Сначала задайте и зафиксируйте origin")
+        self.origin_state_label.setWordWrap(True)
+        transform_layout.addWidget(self.origin_state_label)
+
+        units_row = QHBoxLayout()
+        units_row.addWidget(QLabel("Единицы графика:"))
+        self.units_combo = QComboBox()
+        self.units_combo.addItems(["Пиксели", "мм и м/с"])
+        units_row.addWidget(self.units_combo)
+        transform_layout.addLayout(units_row)
+
+        rotation_row = QHBoxLayout()
+        rotation_row.addWidget(QLabel("Угол (°):"))
+        self.rotation_spin = QSpinBox()
+        self.rotation_spin.setRange(0, 360)
+        rotation_row.addWidget(self.rotation_spin)
+        transform_layout.addLayout(rotation_row)
+
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(QLabel("Масштаб (м/px):"))
+        self.scale_spin = QDoubleSpinBox()
+        self.scale_spin.setDecimals(7)
+        self.scale_spin.setRange(0.0000001, 1000.0)
+        self.scale_spin.setSingleStep(0.0001)
+        self.scale_spin.setValue(0.0000075)
+        scale_row.addWidget(self.scale_spin)
+        transform_layout.addLayout(scale_row)
+
+        dt_row = QHBoxLayout()
+        dt_row.addWidget(QLabel("dt (с):"))
+        self.dt_spin = QDoubleSpinBox()
+        self.dt_spin.setDecimals(7)
+        self.dt_spin.setRange(0.0000001, 1000.0)
+        self.dt_spin.setSingleStep(0.0001)
+        self.dt_spin.setValue(0.000002)
+        dt_row.addWidget(self.dt_spin)
+        transform_layout.addLayout(dt_row)
+        controls_layout.addWidget(transform_group)
+
+        plot_group = QGroupBox("График")
+        plot_layout = QVBoxLayout(plot_group)
+
+        arrow_scale_row = QHBoxLayout()
+        arrow_scale_row.addWidget(QLabel("arrow_scale:"))
+        self.arrow_scale_spin = QDoubleSpinBox()
+        self.arrow_scale_spin.setRange(0.01, 1000.0)
+        self.arrow_scale_spin.setDecimals(2)
+        self.arrow_scale_spin.setValue(20.0)
+        arrow_scale_row.addWidget(self.arrow_scale_spin)
+        plot_layout.addLayout(arrow_scale_row)
+
+        arrow_width_row = QHBoxLayout()
+        arrow_width_row.addWidget(QLabel("arrow_width:"))
+        self.arrow_width_spin = QDoubleSpinBox()
+        self.arrow_width_spin.setRange(0.001, 0.05)
+        self.arrow_width_spin.setSingleStep(0.001)
+        self.arrow_width_spin.setDecimals(3)
+        self.arrow_width_spin.setValue(0.003)
+        arrow_width_row.addWidget(self.arrow_width_spin)
+        plot_layout.addLayout(arrow_width_row)
+
+        cmap_row = QHBoxLayout()
+        cmap_row.addWidget(QLabel("colormap:"))
+        self.cmap_combo = QComboBox()
+        self.cmap_combo.addItems([
+            "jet", "viridis", "plasma", "inferno", "magma", "cividis",
+            "coolwarm", "RdYlBu", "Spectral"
+        ])
+        cmap_row.addWidget(self.cmap_combo)
+        plot_layout.addLayout(cmap_row)
+
+        color_row = QHBoxLayout()
+        color_row.addWidget(QLabel("color_by:"))
+        self.color_by_combo = QComboBox()
+        self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
+        color_row.addWidget(self.color_by_combo)
+        plot_layout.addLayout(color_row)
+        controls_layout.addWidget(plot_group)
+
+        self.status_label = QLabel("Готово")
+        self.status_label.setWordWrap(True)
+        controls_layout.addWidget(self.status_label)
+        controls_layout.addStretch()
+
+        self.figure = Figure(figsize=(8, 6))
+        self.canvas = FigureCanvas(self.figure)
+        splitter.addWidget(controls)
+        splitter.addWidget(self.canvas)
+        splitter.setSizes([320, 830])
+        layout.addWidget(splitter)
+
+    def _connect_controls(self):
+        self.x_origin_spin.valueChanged.connect(self._origin_changed)
+        self.y_origin_spin.valueChanged.connect(self._origin_changed)
+        for spin in (
+            self.rotation_spin, self.scale_spin, self.dt_spin,
+            self.arrow_scale_spin, self.arrow_width_spin
+        ):
+            spin.valueChanged.connect(self._schedule_redraw)
+        self.units_combo.currentTextChanged.connect(self._units_changed)
+        self.cmap_combo.currentTextChanged.connect(self._schedule_redraw)
+        self.color_by_combo.currentTextChanged.connect(self._schedule_redraw)
+        self.pick_origin_btn.toggled.connect(self._pick_origin_toggled)
+        self.confirm_origin_btn.clicked.connect(self._confirm_origin)
+        self.save_btn.clicked.connect(self._save_png)
+        self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
+
+    def _load_csv(self):
+        if not self.csv_path.exists():
+            self._load_error = f"Файл не существует: {self.csv_path}"
+            return
+
+        try:
+            with open(self.csv_path, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter=";")
+                fieldnames = reader.fieldnames or []
+                mode, columns = self._detect_columns(fieldnames)
+                if mode is None:
+                    self._load_error = (
+                        "Не удалось определить формат CSV. Ожидаются X0/Y0/dx/dy/L, "
+                        "X_center/Y_center/dx_avg/dy_avg/L_avg или X_mm/Y_mm/dx_ms/dy_ms/L_ms."
+                    )
+                    return
+
+                rows = []
+                for row in reader:
+                    try:
+                        rows.append([self._to_float(row[column]) for column in columns])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+
+            if not rows:
+                self._load_error = "В CSV нет числовых векторов для построения."
+                return
+
+            self._source_mode = mode
+            self._vectors = np.array(rows, dtype=float)
+        except OSError as exc:
+            self._load_error = str(exc)
+
+    def _detect_columns(self, fieldnames):
+        names = set(fieldnames)
+        if {"X_mm", "Y_mm", "dx_ms", "dy_ms", "L_ms"}.issubset(names):
+            return "physical", ("X_mm", "Y_mm", "dx_ms", "dy_ms", "L_ms")
+        if {"X_center", "Y_center", "dx_avg", "dy_avg", "L_avg"}.issubset(names):
+            return "raw", ("X_center", "Y_center", "dx_avg", "dy_avg", "L_avg")
+        if {"X0", "Y0", "dx", "dy", "L"}.issubset(names):
+            return "raw", ("X0", "Y0", "dx", "dy", "L")
+        return None, ()
+
+    @staticmethod
+    def _to_float(value):
+        return float(str(value).replace(",", "."))
+
+    def _origin_changed(self, *_args):
+        if self._source_mode != "physical":
+            self._origin_confirmed = False
+            if self.rotation_spin.value() != 0:
+                self.rotation_spin.blockSignals(True)
+                self.rotation_spin.setValue(0)
+                self.rotation_spin.blockSignals(False)
+            self._update_source_controls()
+        self._schedule_redraw()
+
+    def _confirm_origin(self):
+        if self._source_mode == "physical":
+            return
+        self._origin_confirmed = True
+        self._update_source_controls()
+        self._schedule_redraw()
+
+    def _units_changed(self, *_args):
+        self._update_source_controls()
+        self._schedule_redraw()
+
+    def _pick_origin_toggled(self, checked):
+        if self._source_mode == "physical":
+            self.pick_origin_btn.blockSignals(True)
+            self.pick_origin_btn.setChecked(False)
+            self.pick_origin_btn.blockSignals(False)
+            return
+
+        if checked:
+            if self.units_combo.currentIndex() != 0:
+                self.units_combo.setCurrentIndex(0)
+            self.status_label.setText("Кликните по точке origin на графике в пикселях.")
+
+    def _on_canvas_click(self, event):
+        if (
+            not self.pick_origin_btn.isChecked()
+            or self._source_mode == "physical"
+            or event.inaxes is None
+            or event.xdata is None
+            or event.ydata is None
+        ):
+            return
+
+        self.x_origin_spin.blockSignals(True)
+        self.y_origin_spin.blockSignals(True)
+        self.x_origin_spin.setValue(float(event.xdata))
+        self.y_origin_spin.setValue(float(event.ydata))
+        self.x_origin_spin.blockSignals(False)
+        self.y_origin_spin.blockSignals(False)
+        if self.rotation_spin.value() != 0:
+            self.rotation_spin.blockSignals(True)
+            self.rotation_spin.setValue(0)
+            self.rotation_spin.blockSignals(False)
+
+        self.pick_origin_btn.setChecked(False)
+        self._origin_confirmed = True
+        self._update_source_controls()
+        self._schedule_redraw()
+
+    def _update_source_controls(self):
+        is_physical = self._source_mode == "physical"
+        if is_physical:
+            self.units_combo.blockSignals(True)
+            self.units_combo.setCurrentIndex(1)
+            self.units_combo.blockSignals(False)
+
+        is_pixel_view = not is_physical and self.units_combo.currentIndex() == 0
+        if not is_pixel_view and self.pick_origin_btn.isChecked():
+            self.pick_origin_btn.blockSignals(True)
+            self.pick_origin_btn.setChecked(False)
+            self.pick_origin_btn.blockSignals(False)
+
+        self.units_combo.setEnabled(not is_physical)
+        self.x_origin_spin.setEnabled(not is_physical)
+        self.y_origin_spin.setEnabled(not is_physical)
+        self.confirm_origin_btn.setEnabled(not is_physical)
+        self.pick_origin_btn.setEnabled(is_pixel_view)
+        self.rotation_spin.setEnabled(not is_physical and self._origin_confirmed and not is_pixel_view)
+        self.scale_spin.setEnabled(not is_physical and not is_pixel_view)
+        self.dt_spin.setEnabled(not is_physical and not is_pixel_view)
+
+        if is_physical:
+            self.origin_state_label.setText("CSV уже содержит координаты в мм и скорости в м/с")
+        elif self._origin_confirmed and is_pixel_view:
+            self.origin_state_label.setText("Origin зафиксирован. Переключитесь в мм и м/с, чтобы менять угол")
+        elif self._origin_confirmed:
+            self.origin_state_label.setText("Origin зафиксирован, угол можно менять")
+        else:
+            self.origin_state_label.setText("Сначала задайте и зафиксируйте origin")
+
+    def _schedule_redraw(self, *_args):
+        self._redraw_timer.start(120)
+
+    def _transformed_vectors(self):
+        x = self._vectors[:, 0]
+        y = self._vectors[:, 1]
+        dx = self._vectors[:, 2]
+        dy = self._vectors[:, 3]
+        length = self._vectors[:, 4]
+
+        if self._source_mode == "physical":
+            return x, y, dx, dy, length, "X (мм)", "Y (мм)", "м/с"
+
+        if self.units_combo.currentIndex() == 0:
+            return x, y, dx, dy, length, "X (px)", "Y (px)", "px"
+
+        theta = math.radians(self.rotation_spin.value())
+        cos_theta = math.cos(theta)
+        sin_theta = math.sin(theta)
+        scale = self.scale_spin.value()
+        dt = self.dt_spin.value()
+
+        x_rel = x - self.x_origin_spin.value()
+        y_rel = y - self.y_origin_spin.value()
+        x_rot = x_rel * cos_theta - y_rel * sin_theta
+        y_rot = x_rel * sin_theta + y_rel * cos_theta
+        dx_rot = dx * cos_theta - dy * sin_theta
+        dy_rot = dx * sin_theta + dy * cos_theta
+
+        x_mm = x_rot * scale * 1000.0
+        y_mm = y_rot * scale * 1000.0
+        dx_ms = dx_rot * scale / dt
+        dy_ms = dy_rot * scale / dt
+        l_ms = length * scale / dt
+        return x_mm, y_mm, dx_ms, dy_ms, l_ms, "X (мм)", "Y (мм)", "м/с"
+
+    def _draw_plot(self):
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+
+        if self._load_error:
+            ax.text(0.5, 0.5, self._load_error, ha="center", va="center", wrap=True)
+            ax.set_axis_off()
+            self.status_label.setText(self._load_error)
+            self.canvas.draw_idle()
+            return
+
+        x, y, dx, dy, length, x_label, y_label, unit = self._transformed_vectors()
+        angle = np.degrees(np.arctan2(dy, dx))
+        color_by = self.color_by_combo.currentText()
+
+        if color_by == "dx":
+            colors = dx
+            colorbar_label = f"dx ({unit})"
+        elif color_by == "dy":
+            colors = dy
+            colorbar_label = f"dy ({unit})"
+        elif color_by == "angle":
+            colors = angle
+            colorbar_label = "Угол (градусы)"
+        else:
+            colors = length
+            colorbar_label = f"L ({unit})"
+
+        quiver = ax.quiver(
+            x, y, dx, dy, colors,
+            cmap=self.cmap_combo.currentText(),
+            scale=10.0 * self.arrow_scale_spin.value(),
+            width=self.arrow_width_spin.value(),
+            headwidth=4.0,
+            headlength=5.0,
+        )
+        self.figure.colorbar(quiver, ax=ax, label=colorbar_label)
+        ax.set_title(self.csv_path.name)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.grid(True, alpha=0.3)
+        if self._source_mode != "physical" and self.units_combo.currentIndex() == 0:
+            ax.scatter(
+                [self.x_origin_spin.value()],
+                [self.y_origin_spin.value()],
+                marker="+",
+                s=140,
+                c="red",
+                linewidths=2.0,
+                label="origin",
+                zorder=5,
+            )
+            ax.legend(loc="upper left", framealpha=0.9)
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+        status_lines = []
+        if self.pick_origin_btn.isChecked():
+            status_lines.append("Кликните по точке origin на графике в пикселях")
+        if self._source_mode != "physical":
+            status_lines.append(
+                f"origin: X={self.x_origin_spin.value():.1f} px, "
+                f"Y={self.y_origin_spin.value():.1f} px"
+            )
+            if not self._origin_confirmed:
+                status_lines.append("Угол заблокирован до фиксации origin")
+        status_lines.extend([
+            f"Векторов: {len(x)}",
+            f"dx: [{dx.min():.6f}, {dx.max():.6f}] {unit}",
+            f"dy: [{dy.min():.6f}, {dy.max():.6f}] {unit}",
+            f"L: [{length.min():.6f}, {length.max():.6f}] {unit}",
+        ])
+        self.status_label.setText("\n".join(status_lines))
+
+    def _save_png(self):
+        default_path = self.csv_path.with_name(f"{self.csv_path.stem}_vector_plot.png")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить график",
+            str(default_path),
+            "PNG files (*.png);;All files (*.*)",
+        )
+        if not file_path:
+            return
+        self.figure.savefig(file_path, dpi=150, bbox_inches="tight")
+        self.status_label.setText(f"Сохранено: {file_path}")
+
+
+class VectorGraphicsTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        group = QGroupBox("Векторный график")
+        group_layout = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        label = QLabel("CSV:")
+        label.setFixedWidth(110)
+        self.csv_line = QLineEdit()
+        self.csv_line.setToolTip("CSV с векторами: pair_sum, averaged или transformed.")
+        self.browse_btn = QPushButton("Обзор...")
+        self.open_btn = QPushButton("Открыть график")
+        row.addWidget(label)
+        row.addWidget(self.csv_line)
+        row.addWidget(self.browse_btn)
+        row.addWidget(self.open_btn)
+        group_layout.addLayout(row)
+
+        self.status_label = QLabel("Готово")
+        group_layout.addWidget(self.status_label)
+        layout.addWidget(group)
+        layout.addStretch()
+
+        self.browse_btn.clicked.connect(self._browse_csv)
+        self.open_btn.clicked.connect(self._open_dialog)
+        self.csv_line.returnPressed.connect(self._open_dialog)
+
+    def _browse_csv(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите CSV с векторами",
+            "",
+            "CSV files (*.csv);;All files (*.*)",
+        )
+        if not file_path:
+            return
+        self.csv_line.setText(file_path)
+        self._open_dialog()
+
+    def _open_dialog(self):
+        csv_path = self.csv_line.text().strip()
+        if not csv_path:
+            QMessageBox.warning(self, "Внимание", "Выберите CSV файл.")
+            return
+        if not Path(csv_path).exists():
+            QMessageBox.warning(self, "Внимание", "CSV файл не найден.")
+            return
+        self.status_label.setText(Path(csv_path).name)
+        dialog = VectorPlotDialog(csv_path, self)
+        dialog.exec_()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
