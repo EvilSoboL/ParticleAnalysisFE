@@ -15,6 +15,7 @@ import cv2
 import csv
 import math
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -1091,11 +1092,170 @@ class PTVPreviewDialog(QDialog):
         self.reset_btn.clicked.connect(self.image_view.reset_zoom)
 
 
+class PTVHistogramDialog(QDialog):
+    def __init__(self, viewer_tab, record, parent=None):
+        super().__init__(parent)
+        self.viewer_tab = viewer_tab
+        self.record = record
+        self._current_image = None
+
+        self.setWindowTitle(f"Гистограмма: {record.camera}, пара {record.pair_number}")
+        self.resize(1200, 800)
+        self._init_ui()
+        self._redraw()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        params_layout = QHBoxLayout()
+        params_layout.addWidget(QLabel("Параметр:"))
+        self.metric_combo = QComboBox()
+        for key, spec in self.viewer_tab.HISTOGRAM_METRICS.items():
+            self.metric_combo.addItem(spec["label"], key)
+        params_layout.addWidget(self.metric_combo)
+
+        params_layout.addWidget(QLabel("Бары:"))
+        self.bins_spin = QSpinBox()
+        self.bins_spin.setRange(1, 500)
+        self.bins_spin.setValue(20)
+        params_layout.addWidget(self.bins_spin)
+
+        self.range_cb = QCheckBox("Диапазон вручную")
+        params_layout.addWidget(self.range_cb)
+        params_layout.addWidget(QLabel("min:"))
+        self.min_spin = QDoubleSpinBox()
+        self.min_spin.setRange(-1000000000.0, 1000000000.0)
+        self.min_spin.setDecimals(3)
+        self.min_spin.setKeyboardTracking(False)
+        params_layout.addWidget(self.min_spin)
+        params_layout.addWidget(QLabel("max:"))
+        self.max_spin = QDoubleSpinBox()
+        self.max_spin.setRange(-1000000000.0, 1000000000.0)
+        self.max_spin.setDecimals(3)
+        self.max_spin.setKeyboardTracking(False)
+        params_layout.addWidget(self.max_spin)
+        params_layout.addStretch()
+        layout.addLayout(params_layout)
+
+        save_layout = QHBoxLayout()
+        save_layout.addWidget(QLabel("Папка PNG:"))
+        self.output_line = QLineEdit(self.viewer_tab._default_histogram_folder())
+        self.browse_btn = QPushButton("Обзор...")
+        self.save_btn = QPushButton("Сохранить PNG")
+        save_layout.addWidget(self.output_line)
+        save_layout.addWidget(self.browse_btn)
+        save_layout.addWidget(self.save_btn)
+        layout.addLayout(save_layout)
+
+        self.status_label = QLabel("Готово")
+        layout.addWidget(self.status_label)
+
+        self.image_view = PTVImageView()
+        layout.addWidget(self.image_view)
+
+        self.metric_combo.currentIndexChanged.connect(self._metric_changed)
+        self.bins_spin.valueChanged.connect(self._redraw)
+        self.range_cb.toggled.connect(self._range_toggled)
+        self.min_spin.valueChanged.connect(self._redraw)
+        self.max_spin.valueChanged.connect(self._redraw)
+        self.browse_btn.clicked.connect(self._browse_folder)
+        self.save_btn.clicked.connect(self._save_png)
+        self._update_range_controls()
+
+    def _metric_changed(self):
+        self._fill_range_from_data()
+        self._redraw()
+
+    def _range_toggled(self):
+        self._update_range_controls()
+        if self.range_cb.isChecked():
+            self._fill_range_from_data()
+        self._redraw()
+
+    def _update_range_controls(self):
+        enabled = self.range_cb.isChecked()
+        self.min_spin.setEnabled(enabled)
+        self.max_spin.setEnabled(enabled)
+
+    def _fill_range_from_data(self):
+        values = self.viewer_tab._histogram_values(
+            self.record,
+            self.metric_combo.currentData(),
+        )
+        if values.size == 0:
+            return
+        min_value = float(np.min(values))
+        max_value = float(np.max(values))
+        if math.isclose(min_value, max_value):
+            padding = max(abs(min_value) * 0.05, 1.0)
+            min_value -= padding
+            max_value += padding
+        self.min_spin.blockSignals(True)
+        self.max_spin.blockSignals(True)
+        self.min_spin.setValue(min_value)
+        self.max_spin.setValue(max_value)
+        self.min_spin.blockSignals(False)
+        self.max_spin.blockSignals(False)
+
+    def _histogram_range(self):
+        if not self.range_cb.isChecked():
+            return None
+        min_value = min(self.min_spin.value(), self.max_spin.value())
+        max_value = max(self.min_spin.value(), self.max_spin.value())
+        if math.isclose(min_value, max_value):
+            return None
+        return min_value, max_value
+
+    def _redraw(self):
+        image, summary = self.viewer_tab._create_histogram_image(
+            self.record,
+            metric_key=self.metric_combo.currentData(),
+            bins=self.bins_spin.value(),
+            value_range=self._histogram_range(),
+        )
+        self._current_image = image
+        self.image_view.set_image(image)
+        self.status_label.setText(summary)
+
+    def _browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку для PNG",
+            self.output_line.text().strip() or self.viewer_tab._default_histogram_folder(),
+        )
+        if folder:
+            self.output_line.setText(folder)
+
+    def _save_png(self):
+        folder = Path(self.output_line.text().strip() or self.viewer_tab._default_histogram_folder())
+        try:
+            output_path = self.viewer_tab._save_histogram_png(
+                self.record,
+                folder,
+                metric_key=self.metric_combo.currentData(),
+                bins=self.bins_spin.value(),
+                value_range=self._histogram_range(),
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить PNG:\n{exc}")
+            return
+        self.status_label.setText(f"Сохранено: {output_path}")
+
+
 class PTVViewerTab(QWidget):
+    HISTOGRAM_METRICS = {
+        "Diameter": {"label": "Диаметр частицы", "unit": "px"},
+        "Area": {"label": "Площадь частицы", "unit": "px^2"},
+        "L": {"label": "Смещение L", "unit": "px"},
+        "dx": {"label": "Смещение dx", "unit": "px"},
+        "dy": {"label": "Смещение dy", "unit": "px"},
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._records = []
         self._visualizer = PTVVisualizer()
+        self._visualizer_ready = False
         self._preview_image = None
         self._init_ui()
 
@@ -1108,6 +1268,15 @@ class PTVViewerTab(QWidget):
         original_layout, self.original_line = _folder_row("Папка кадров:", self)
         self.original_line.setPlaceholderText("Необязательно; определяется из PTV_<threshold>")
         layout.addLayout(original_layout)
+
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Режим отображения:"))
+        self.display_mode_combo = QComboBox()
+        self.display_mode_combo.addItem("Сопоставление пар", "matches")
+        self.display_mode_combo.addItem("Гистограмма распределения частиц", "histogram")
+        mode_layout.addWidget(self.display_mode_combo)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
 
         btn_layout = QHBoxLayout()
         self.scan_btn = QPushButton("Сканировать")
@@ -1182,6 +1351,7 @@ class PTVViewerTab(QWidget):
         layout.addWidget(self.log_text)
 
         self.scan_btn.clicked.connect(self._scan)
+        self.display_mode_combo.currentIndexChanged.connect(self._display_mode_changed)
         self.preview_btn.clicked.connect(self._preview_selected)
         self.open_btn.clicked.connect(self._open_large)
         self.save_btn.clicked.connect(self._save_selected)
@@ -1190,6 +1360,37 @@ class PTVViewerTab(QWidget):
         self.reset_zoom_btn.clicked.connect(self.preview_view.reset_zoom)
         self.table.itemSelectionChanged.connect(self._preview_selected)
         self.table.itemDoubleClicked.connect(lambda _item: self._open_large())
+
+    def _display_mode(self):
+        return self.display_mode_combo.currentData() or "matches"
+
+    def _display_mode_changed(self):
+        self._preview_image = None
+        self._set_preview_labels(None)
+        self.info_label.setText("Выберите пару")
+        self._update_action_buttons()
+        if self._selected_record() is not None:
+            self._preview_selected()
+
+    def _can_preview_current_mode(self):
+        if not self._records:
+            return False
+        if self._display_mode() == "histogram":
+            return True
+        return self._visualizer_ready
+
+    def _update_action_buttons(self):
+        can_preview = self._can_preview_current_mode()
+        has_preview = self._preview_image is not None
+        histogram_mode = self._display_mode() == "histogram"
+
+        self.preview_btn.setEnabled(can_preview)
+        self.save_btn.setEnabled(can_preview)
+        self.open_btn.setEnabled(has_preview or (histogram_mode and bool(self._records)))
+        self.back_btn.setEnabled(has_preview)
+        self.zoom_out_btn.setEnabled(has_preview)
+        self.reset_zoom_btn.setEnabled(has_preview)
+        self.save_btn.setText("Сохранить PNG" if histogram_mode else "Сохранить выбранное")
 
     def _scan(self):
         ptv_folder = self.ptv_line.text().strip()
@@ -1202,6 +1403,7 @@ class PTVViewerTab(QWidget):
         self._preview_image = None
         self._set_preview_labels(None)
         self.info_label.setText("Выберите пару")
+        self._visualizer_ready = False
 
         result = scan_ptv_pairs(ptv_folder, self.original_line.text().strip() or None)
         self._records = result.records
@@ -1224,12 +1426,8 @@ class PTVViewerTab(QWidget):
         self._populate_table()
 
         self.status_label.setText(f"Найдено пар: {len(self._records)} в {ptv_folder}")
-        self.preview_btn.setEnabled(bool(self._records) and visualizer_ready)
-        self.save_btn.setEnabled(bool(self._records) and visualizer_ready)
-        self.open_btn.setEnabled(self._preview_image is not None)
-        self.back_btn.setEnabled(self._preview_image is not None)
-        self.zoom_out_btn.setEnabled(self._preview_image is not None)
-        self.reset_zoom_btn.setEnabled(self._preview_image is not None)
+        self._visualizer_ready = visualizer_ready
+        self._update_action_buttons()
         self._log(self.status_label.text())
 
     def _populate_table(self):
@@ -1273,13 +1471,17 @@ class PTVViewerTab(QWidget):
         record = self._selected_record()
         if record is None:
             return
+        if self._display_mode() == "histogram":
+            self._preview_histogram_selected(record)
+        else:
+            self._preview_matches_selected(record)
+
+    def _preview_matches_selected(self, record):
         if not record.source_ok:
             self.info_label.setText("Исходные кадры не найдены")
             self._set_preview_labels(None)
-            self.open_btn.setEnabled(False)
-            self.back_btn.setEnabled(False)
-            self.zoom_out_btn.setEnabled(False)
-            self.reset_zoom_btn.setEnabled(False)
+            self._preview_image = None
+            self._update_action_buttons()
             return
 
         preview = self._visualizer.get_preview_image(
@@ -1291,10 +1493,8 @@ class PTVViewerTab(QWidget):
         if preview is None:
             self.info_label.setText("Не удалось построить предпросмотр")
             self._set_preview_labels(None)
-            self.open_btn.setEnabled(False)
-            self.back_btn.setEnabled(False)
-            self.zoom_out_btn.setEnabled(False)
-            self.reset_zoom_btn.setEnabled(False)
+            self._preview_image = None
+            self._update_action_buttons()
             return
 
         self.info_label.setText(
@@ -1302,10 +1502,14 @@ class PTVViewerTab(QWidget):
             f"совпадений {record.matches_count}, средн. L={record.mean_l:.2f}, макс. L={record.max_l:.2f}"
         )
         self._set_preview_labels(preview)
-        self.open_btn.setEnabled(True)
-        self.back_btn.setEnabled(True)
-        self.zoom_out_btn.setEnabled(True)
-        self.reset_zoom_btn.setEnabled(True)
+        self._update_action_buttons()
+
+    def _preview_histogram_selected(self, record):
+        image, summary = self._create_histogram_image(record)
+        self._preview_image = image
+        self.info_label.setText(summary)
+        self._set_preview_labels(image)
+        self._update_action_buttons()
 
     def _set_preview_labels(self, preview):
         if preview is None:
@@ -1313,9 +1517,100 @@ class PTVViewerTab(QWidget):
             return
         self.preview_view.set_image(preview)
 
+    @staticmethod
+    def _to_float_value(value):
+        return float(str(value).replace(",", "."))
+
+    def _histogram_values(self, record, metric_key="Diameter"):
+        values = []
+        try:
+            with open(record.csv_path, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter=";")
+                for row in reader:
+                    try:
+                        values.append(self._to_float_value(row.get(metric_key, "")))
+                    except (TypeError, ValueError):
+                        continue
+        except OSError:
+            return np.array([], dtype=float)
+        return np.array(values, dtype=float)
+
+    def _create_histogram_image(self, record, metric_key="Diameter", bins=20, value_range=None):
+        spec = self.HISTOGRAM_METRICS.get(metric_key, self.HISTOGRAM_METRICS["Diameter"])
+        values = self._histogram_values(record, metric_key)
+
+        figure = Figure(figsize=(10, 6.5), dpi=120)
+        canvas = FigureCanvasAgg(figure)
+        ax = figure.add_subplot(111)
+
+        title = f"{record.camera}, пара {record.pair_number}: {spec['label']}"
+        if values.size == 0:
+            ax.text(0.5, 0.5, "Нет числовых данных для гистограммы", ha="center", va="center")
+            ax.set_axis_off()
+            summary = f"{title}: нет данных"
+        else:
+            ax.hist(
+                values,
+                bins=max(1, int(bins)),
+                range=value_range,
+                color="#2f80ed",
+                edgecolor="white",
+                linewidth=0.8,
+                alpha=0.9,
+            )
+            mean_value = float(np.mean(values))
+            median_value = float(np.median(values))
+            ax.axvline(mean_value, color="#d62728", linestyle="--", linewidth=1.5, label=f"Среднее: {mean_value:.2f}")
+            ax.axvline(median_value, color="#2ca02c", linestyle=":", linewidth=1.8, label=f"Медиана: {median_value:.2f}")
+            ax.legend(loc="upper right")
+            ax.grid(True, axis="y", alpha=0.3)
+            ax.set_xlabel(f"{spec['label']}, {spec['unit']}")
+            ax.set_ylabel("Количество частиц")
+            summary = (
+                f"{title}: частиц {values.size}, "
+                f"min={np.min(values):.2f}, max={np.max(values):.2f}, "
+                f"mean={mean_value:.2f}"
+            )
+
+        ax.set_title(title)
+        figure.tight_layout()
+        canvas.draw()
+        width, height = canvas.get_width_height()
+        rgba = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(height, width, 4)
+        image = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+        return image, summary
+
+    @staticmethod
+    def _default_histogram_folder():
+        desktop = Path.home() / "Desktop"
+        return str(desktop if desktop.exists() else Path.home())
+
+    @staticmethod
+    def _histogram_filename(record, metric_key):
+        safe_metric = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in str(metric_key))
+        return f"histogram_{record.camera}_pair_{record.pair_number}_{safe_metric}.png"
+
+    def _save_histogram_png(self, record, folder, metric_key="Diameter", bins=20, value_range=None):
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        image, _summary = self._create_histogram_image(
+            record,
+            metric_key=metric_key,
+            bins=bins,
+            value_range=value_range,
+        )
+        output_path = folder / self._histogram_filename(record, metric_key)
+        if not cv2.imwrite(str(output_path), image):
+            raise OSError(f"Не удалось записать файл: {output_path}")
+        return output_path
+
     def _open_large(self):
         record = self._selected_record()
         if record is None:
+            return
+        if self._display_mode() == "histogram":
+            dialog = PTVHistogramDialog(self, record, self)
+            dialog.exec_()
             return
         if self._preview_image is None:
             self._preview_selected()
@@ -1334,6 +1629,9 @@ class PTVViewerTab(QWidget):
         if record is None:
             QMessageBox.warning(self, "Внимание", "Сначала выберите пару.")
             return
+        if self._display_mode() == "histogram":
+            self._save_selected_histogram(record)
+            return
         if not record.source_ok:
             QMessageBox.warning(self, "Внимание", "Исходные кадры не найдены.")
             return
@@ -1347,6 +1645,22 @@ class PTVViewerTab(QWidget):
             self._log(f"Вывод: {result.get('output_file') or self._visualizer.output_folder}")
         else:
             QMessageBox.warning(self, "Внимание", "; ".join(result.get("errors", [])) or "Не удалось сохранить.")
+
+    def _save_selected_histogram(self, record):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку для PNG",
+            self._default_histogram_folder(),
+        )
+        if not folder:
+            return
+        try:
+            output_path = self._save_histogram_png(record, folder)
+        except OSError as exc:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить PNG:\n{exc}")
+            return
+        self._log(f"Сохранена гистограмма: {output_path}")
+        self.status_label.setText(f"Сохранено: {output_path}")
 
     def _log(self, text: str):
         self.log_text.append(text)
