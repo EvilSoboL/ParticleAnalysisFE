@@ -1097,13 +1097,17 @@ class PTVPreviewDialog(QDialog):
 
 
 class PTVHistogramDialog(QDialog):
-    def __init__(self, viewer_tab, record, parent=None):
+    def __init__(self, viewer_tab, record, parent=None, aggregate_by_camera=False):
         super().__init__(parent)
         self.viewer_tab = viewer_tab
         self.record = record
+        self.aggregate_by_camera = aggregate_by_camera
         self._current_image = None
 
-        self.setWindowTitle(f"Гистограмма: {record.camera}, пара {record.pair_number}")
+        if self.aggregate_by_camera:
+            self.setWindowTitle("Суммарная гистограмма по камерам")
+        else:
+            self.setWindowTitle(f"Гистограмма: {record.camera}, пара {record.pair_number}")
         self.resize(1200, 800)
         self._init_ui()
         self._redraw()
@@ -1117,6 +1121,20 @@ class PTVHistogramDialog(QDialog):
         for key, spec in self.viewer_tab.HISTOGRAM_METRICS.items():
             self.metric_combo.addItem(spec["label"], key)
         params_layout.addWidget(self.metric_combo)
+
+        self.summary_plot_label = QLabel("График:")
+        self.summary_plot_combo = QComboBox()
+        for key, label in self.viewer_tab.HISTOGRAM_SUMMARY_PLOTS:
+            self.summary_plot_combo.addItem(label, key)
+        self.summary_plot_label.setVisible(self.aggregate_by_camera)
+        self.summary_plot_combo.setVisible(self.aggregate_by_camera)
+        if self.aggregate_by_camera:
+            current_key = self.viewer_tab._histogram_summary_key()
+            index = self.summary_plot_combo.findData(current_key)
+            if index >= 0:
+                self.summary_plot_combo.setCurrentIndex(index)
+        params_layout.addWidget(self.summary_plot_label)
+        params_layout.addWidget(self.summary_plot_combo)
 
         params_layout.addWidget(QLabel("Ширина бара:"))
         self.bin_width_spin = QDoubleSpinBox()
@@ -1155,10 +1173,12 @@ class PTVHistogramDialog(QDialog):
         layout.addLayout(params_layout)
 
         save_layout = QHBoxLayout()
-        save_layout.addWidget(QLabel("Папка PNG:"))
+        save_layout.addWidget(QLabel("Папка PNG + CSV:"))
         self.output_line = QLineEdit(self.viewer_tab._default_histogram_folder())
         self.browse_btn = QPushButton("Обзор...")
-        self.save_btn = QPushButton("Сохранить PNG")
+        self.save_btn = QPushButton("Сохранить PNG + CSV")
+        if self.aggregate_by_camera:
+            self.save_btn.setText("Сохранить 3 PNG + CSV")
         save_layout.addWidget(self.output_line)
         save_layout.addWidget(self.browse_btn)
         save_layout.addWidget(self.save_btn)
@@ -1175,6 +1195,7 @@ class PTVHistogramDialog(QDialog):
         layout.addWidget(self.image_view, 1)
 
         self.metric_combo.currentIndexChanged.connect(self._metric_changed)
+        self.summary_plot_combo.currentIndexChanged.connect(self._redraw)
         self.bin_width_spin.valueChanged.connect(self._redraw)
         self.bin_width_preset_combo.currentIndexChanged.connect(self._preset_width_changed)
         self.range_cb.toggled.connect(self._range_toggled)
@@ -1212,10 +1233,13 @@ class PTVHistogramDialog(QDialog):
         self.max_spin.setEnabled(enabled)
 
     def _fill_range_from_data(self):
-        values = self.viewer_tab._histogram_values(
-            self.record,
-            self.metric_combo.currentData(),
-        )
+        if self.aggregate_by_camera:
+            values = self.viewer_tab._histogram_all_values(self.metric_combo.currentData())
+        else:
+            values = self.viewer_tab._histogram_values(
+                self.record,
+                self.metric_combo.currentData(),
+            )
         if values.size == 0:
             return
         min_value = float(np.min(values))
@@ -1241,12 +1265,20 @@ class PTVHistogramDialog(QDialog):
         return min_value, max_value
 
     def _redraw(self):
-        image, summary = self.viewer_tab._create_histogram_image(
-            self.record,
-            metric_key=self.metric_combo.currentData(),
-            bin_width=self.bin_width_spin.value(),
-            value_range=self._histogram_range(),
-        )
+        if self.aggregate_by_camera:
+            image, summary = self.viewer_tab._create_histogram_summary_image(
+                metric_key=self.metric_combo.currentData(),
+                bin_width=self.bin_width_spin.value(),
+                value_range=self._histogram_range(),
+                summary_key=self.summary_plot_combo.currentData(),
+            )
+        else:
+            image, summary = self.viewer_tab._create_histogram_image(
+                self.record,
+                metric_key=self.metric_combo.currentData(),
+                bin_width=self.bin_width_spin.value(),
+                value_range=self._histogram_range(),
+            )
         self._current_image = image
         self.image_view.set_image(image, show_legend=False)
         self.status_label.setText(summary)
@@ -1254,7 +1286,7 @@ class PTVHistogramDialog(QDialog):
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Выберите папку для PNG",
+            "Выберите папку для PNG + CSV",
             self.output_line.text().strip() or self.viewer_tab._default_histogram_folder(),
         )
         if folder:
@@ -1263,17 +1295,28 @@ class PTVHistogramDialog(QDialog):
     def _save_png(self):
         folder = Path(self.output_line.text().strip() or self.viewer_tab._default_histogram_folder())
         try:
-            output_path = self.viewer_tab._save_histogram_png(
-                self.record,
-                folder,
-                metric_key=self.metric_combo.currentData(),
-                bin_width=self.bin_width_spin.value(),
-                value_range=self._histogram_range(),
-            )
+            if self.aggregate_by_camera:
+                saved_paths = self.viewer_tab._save_histogram_summary_set(
+                    folder,
+                    metric_key=self.metric_combo.currentData(),
+                    bin_width=self.bin_width_spin.value(),
+                    value_range=self._histogram_range(),
+                )
+            else:
+                output_path, csv_path = self.viewer_tab._save_histogram_png(
+                    self.record,
+                    folder,
+                    metric_key=self.metric_combo.currentData(),
+                    bin_width=self.bin_width_spin.value(),
+                    value_range=self._histogram_range(),
+                )
         except OSError as exc:
             QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить PNG:\n{exc}")
             return
-        self.status_label.setText(f"Сохранено: {output_path}")
+        if self.aggregate_by_camera:
+            self.status_label.setText(f"Сохранено графиков: {len(saved_paths)}")
+            return
+        self.status_label.setText(f"Сохранено: {output_path}; CSV: {csv_path}")
 
 
 class PTVViewerTab(QWidget):
@@ -1284,6 +1327,11 @@ class PTVViewerTab(QWidget):
         "dx": {"label": "Смещение dx", "unit": "px"},
         "dy": {"label": "Смещение dy", "unit": "px"},
     }
+    HISTOGRAM_SUMMARY_PLOTS = [
+        ("cam_1", "cam_1"),
+        ("cam_2", "cam_2"),
+        ("all_cameras", "Общий"),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1309,6 +1357,22 @@ class PTVViewerTab(QWidget):
         self.display_mode_combo.addItem("Сопоставление пар", "matches")
         self.display_mode_combo.addItem("Гистограмма распределения частиц", "histogram")
         mode_layout.addWidget(self.display_mode_combo)
+        self.histogram_scope_label = QLabel("Гистограмма:")
+        self.histogram_scope_combo = QComboBox()
+        self.histogram_scope_combo.addItem("Выбранная пара", "pair")
+        self.histogram_scope_combo.addItem("Все пары по камерам", "all_by_camera")
+        self.histogram_scope_label.setVisible(False)
+        self.histogram_scope_combo.setVisible(False)
+        mode_layout.addWidget(self.histogram_scope_label)
+        mode_layout.addWidget(self.histogram_scope_combo)
+        self.histogram_summary_plot_label = QLabel("График:")
+        self.histogram_summary_plot_combo = QComboBox()
+        for key, label in self.HISTOGRAM_SUMMARY_PLOTS:
+            self.histogram_summary_plot_combo.addItem(label, key)
+        self.histogram_summary_plot_label.setVisible(False)
+        self.histogram_summary_plot_combo.setVisible(False)
+        mode_layout.addWidget(self.histogram_summary_plot_label)
+        mode_layout.addWidget(self.histogram_summary_plot_combo)
         mode_layout.addStretch()
         layout.addLayout(mode_layout)
 
@@ -1386,6 +1450,8 @@ class PTVViewerTab(QWidget):
 
         self.scan_btn.clicked.connect(self._scan)
         self.display_mode_combo.currentIndexChanged.connect(self._display_mode_changed)
+        self.histogram_scope_combo.currentIndexChanged.connect(self._histogram_scope_changed)
+        self.histogram_summary_plot_combo.currentIndexChanged.connect(self._histogram_summary_plot_changed)
         self.preview_btn.clicked.connect(self._preview_selected)
         self.open_btn.clicked.connect(self._open_large)
         self.save_btn.clicked.connect(self._save_selected)
@@ -1398,12 +1464,36 @@ class PTVViewerTab(QWidget):
     def _display_mode(self):
         return self.display_mode_combo.currentData() or "matches"
 
+    def _histogram_scope(self):
+        return self.histogram_scope_combo.currentData() or "pair"
+
+    def _histogram_uses_summary(self):
+        return self._display_mode() == "histogram" and self._histogram_scope() == "all_by_camera"
+
+    def _histogram_summary_key(self):
+        return self.histogram_summary_plot_combo.currentData() or "all_cameras"
+
     def _display_mode_changed(self):
         self._preview_image = None
         self._set_preview_labels(None)
         self.info_label.setText("Выберите пару")
         self._update_action_buttons()
-        if self._selected_record() is not None:
+        if self._records:
+            self._preview_selected()
+
+    def _histogram_scope_changed(self):
+        self._preview_image = None
+        self._set_preview_labels(None)
+        self.info_label.setText("Выберите пару")
+        self._update_action_buttons()
+        if self._display_mode() == "histogram" and self._records:
+            self._preview_selected()
+
+    def _histogram_summary_plot_changed(self):
+        self._preview_image = None
+        self._set_preview_labels(None)
+        self._update_action_buttons()
+        if self._histogram_uses_summary() and self._records:
             self._preview_selected()
 
     def _can_preview_current_mode(self):
@@ -1418,13 +1508,29 @@ class PTVViewerTab(QWidget):
         has_preview = self._preview_image is not None
         histogram_mode = self._display_mode() == "histogram"
 
+        self.histogram_scope_label.setVisible(histogram_mode)
+        self.histogram_scope_combo.setVisible(histogram_mode)
+        self.histogram_scope_combo.setEnabled(histogram_mode and bool(self._records))
+        summary_mode = self._histogram_uses_summary()
+        self.histogram_summary_plot_label.setVisible(summary_mode)
+        self.histogram_summary_plot_combo.setVisible(summary_mode)
+        self.histogram_summary_plot_combo.setEnabled(summary_mode and bool(self._records))
         self.preview_btn.setEnabled(can_preview)
         self.save_btn.setEnabled(can_preview)
         self.open_btn.setEnabled(has_preview or (histogram_mode and bool(self._records)))
         self.back_btn.setEnabled(has_preview)
         self.zoom_out_btn.setEnabled(has_preview)
         self.reset_zoom_btn.setEnabled(has_preview)
-        self.save_btn.setText("Сохранить PNG" if histogram_mode else "Сохранить выбранное")
+        if self._histogram_uses_summary():
+            self.preview_btn.setText("Показать суммарную")
+        elif histogram_mode:
+            self.preview_btn.setText("Показать гистограмму")
+        else:
+            self.preview_btn.setText("Показать выбранное")
+        if summary_mode:
+            self.save_btn.setText("Сохранить 3 PNG + CSV")
+        else:
+            self.save_btn.setText("Сохранить PNG + CSV" if histogram_mode else "Сохранить выбранное")
 
     def _scan(self):
         ptv_folder = self.ptv_line.text().strip()
@@ -1502,6 +1608,9 @@ class PTVViewerTab(QWidget):
         return self._records[int(record_index)] if record_index is not None else None
 
     def _preview_selected(self):
+        if self._histogram_uses_summary():
+            self._preview_histogram_summary()
+            return
         record = self._selected_record()
         if record is None:
             return
@@ -1545,6 +1654,16 @@ class PTVViewerTab(QWidget):
         self._set_preview_labels(image, show_legend=False)
         self._update_action_buttons()
 
+    def _preview_histogram_summary(self):
+        image, summary = self._create_histogram_summary_image(
+            bin_width=1.0,
+            summary_key=self._histogram_summary_key(),
+        )
+        self._preview_image = image
+        self.info_label.setText(summary)
+        self._set_preview_labels(image, show_legend=False)
+        self._update_action_buttons()
+
     def _set_preview_labels(self, preview, show_legend: bool = True):
         if preview is None:
             self.preview_view.clear_image()
@@ -1568,6 +1687,42 @@ class PTVViewerTab(QWidget):
         except OSError:
             return np.array([], dtype=float)
         return np.array(values, dtype=float)
+
+    def _histogram_values_by_camera(self, metric_key="Diameter"):
+        grouped = {}
+        for record in self._records:
+            values = self._histogram_values(record, metric_key)
+            if values.size == 0:
+                continue
+            grouped.setdefault(record.camera, []).append(values)
+        return {
+            camera: np.concatenate(parts)
+            for camera, parts in grouped.items()
+            if parts
+        }
+
+    def _histogram_all_values(self, metric_key="Diameter"):
+        values_by_camera = self._histogram_values_by_camera(metric_key)
+        arrays = [values for values in values_by_camera.values() if values.size]
+        if not arrays:
+            return np.array([], dtype=float)
+        return np.concatenate(arrays)
+
+    @staticmethod
+    def _histogram_camera_order(values_by_camera):
+        preferred = {"cam_1": 0, "cam_2": 1}
+        return sorted(values_by_camera, key=lambda camera: (preferred.get(camera, 10), camera))
+
+    def _histogram_summary_label(self, summary_key):
+        for key, label in self.HISTOGRAM_SUMMARY_PLOTS:
+            if key == summary_key:
+                return label
+        return str(summary_key)
+
+    def _histogram_summary_values(self, metric_key="Diameter", summary_key="all_cameras"):
+        if summary_key == "all_cameras":
+            return self._histogram_all_values(metric_key)
+        return self._histogram_values_by_camera(metric_key).get(summary_key, np.array([], dtype=float))
 
     @staticmethod
     def _histogram_edges(values, bin_width, value_range=None):
@@ -1634,6 +1789,66 @@ class PTVViewerTab(QWidget):
         image = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
         return image, summary
 
+    def _create_histogram_summary_image(self, metric_key="Diameter", bin_width=1.0, value_range=None, summary_key="all_cameras"):
+        spec = self.HISTOGRAM_METRICS.get(metric_key, self.HISTOGRAM_METRICS["Diameter"])
+        all_values = self._histogram_all_values(metric_key)
+        values = self._histogram_summary_values(metric_key, summary_key)
+        plot_label = self._histogram_summary_label(summary_key)
+
+        figure = Figure(figsize=(10, 6.5), dpi=120, facecolor="white")
+        canvas = FigureCanvasAgg(figure)
+        ax = figure.add_subplot(111)
+
+        title = f"{plot_label}: все пары, {spec['label']}"
+        if all_values.size == 0:
+            ax.text(0.5, 0.5, "Нет числовых данных для гистограммы", ha="center", va="center")
+            ax.set_axis_off()
+            summary = f"{title}: нет данных"
+        elif values.size == 0:
+            edges = self._histogram_edges(all_values, bin_width, value_range)
+            ax.set_xlim(float(edges[0]), float(edges[-1]))
+            ax.text(0.5, 0.5, "Нет данных для этого графика", ha="center", va="center", transform=ax.transAxes)
+            ax.grid(True, axis="y", alpha=0.3)
+            ax.set_xlabel(f"{spec['label']}, {spec['unit']}")
+            ax.set_ylabel("Количество частиц")
+            summary = f"{title}: нет данных, бар={float(bin_width):.3g} {spec['unit']}"
+        else:
+            edges = self._histogram_edges(all_values, bin_width, value_range)
+            colors = {
+                "cam_1": "#2f80ed",
+                "cam_2": "#f2994a",
+                "all_cameras": "#27ae60",
+            }
+            ax.hist(
+                values,
+                bins=edges,
+                color=colors.get(summary_key, "#2f80ed"),
+                edgecolor="white",
+                linewidth=0.8,
+                alpha=0.9,
+            )
+            mean_value = float(np.mean(values))
+            median_value = float(np.median(values))
+            ax.axvline(mean_value, color="#d62728", linestyle="--", linewidth=1.5, label=f"Среднее: {mean_value:.2f}")
+            ax.axvline(median_value, color="#2ca02c", linestyle=":", linewidth=1.8, label=f"Медиана: {median_value:.2f}")
+            ax.legend(loc="upper right")
+            ax.grid(True, axis="y", alpha=0.3)
+            ax.set_xlabel(f"{spec['label']}, {spec['unit']}")
+            ax.set_ylabel("Количество частиц")
+            summary = (
+                f"{title}: частиц {values.size}, "
+                f"min={np.min(values):.2f}, max={np.max(values):.2f}, "
+                f"mean={mean_value:.2f}, бар={float(bin_width):.3g} {spec['unit']}"
+            )
+
+        ax.set_title(title)
+        figure.tight_layout()
+        canvas.draw()
+        width, height = canvas.get_width_height()
+        rgba = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(height, width, 4)
+        image = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+        return image, summary
+
     @staticmethod
     def _default_histogram_folder():
         desktop = Path.home() / "Desktop"
@@ -1643,6 +1858,86 @@ class PTVViewerTab(QWidget):
     def _histogram_filename(record, metric_key):
         safe_metric = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in str(metric_key))
         return f"histogram_{record.camera}_pair_{record.pair_number}_{safe_metric}.png"
+
+    @staticmethod
+    def _histogram_summary_filename(metric_key, summary_key):
+        safe_metric = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in str(metric_key))
+        safe_summary = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in str(summary_key))
+        return f"histogram_all_pairs_{safe_summary}_{safe_metric}.png"
+
+    def _histogram_counts(self, record, metric_key="Diameter", bin_width=1.0, value_range=None):
+        values = self._histogram_values(record, metric_key)
+        if values.size == 0:
+            return values, np.array([], dtype=float), np.array([], dtype=int)
+        edges = self._histogram_edges(values, bin_width, value_range)
+        counts, edges = np.histogram(values, bins=edges)
+        return values, edges, counts
+
+    def _histogram_summary_counts(self, metric_key="Diameter", bin_width=1.0, value_range=None):
+        values_by_camera = self._histogram_values_by_camera(metric_key)
+        all_values = self._histogram_all_values(metric_key)
+        if all_values.size == 0:
+            return values_by_camera, np.array([], dtype=float), {}
+        edges = self._histogram_edges(all_values, bin_width, value_range)
+        counts_by_camera = {
+            camera: np.histogram(values, bins=edges)[0]
+            for camera, values in values_by_camera.items()
+        }
+        counts_by_camera["all_cameras"] = np.histogram(all_values, bins=edges)[0]
+        return values_by_camera, edges, counts_by_camera
+
+    def _save_histogram_csv(self, csv_path, record, metric_key="Diameter", bin_width=1.0, value_range=None):
+        spec = self.HISTOGRAM_METRICS.get(metric_key, self.HISTOGRAM_METRICS["Diameter"])
+        _values, edges, counts = self._histogram_counts(record, metric_key, bin_width, value_range)
+
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f, delimiter=";")
+            writer.writerow([
+                "camera", "pair", "parameter", "unit", "bin_width",
+                "bin_left", "bin_right", "count"
+            ])
+            for left, right, count in zip(edges[:-1], edges[1:], counts):
+                writer.writerow([
+                    record.camera,
+                    record.pair_number,
+                    metric_key,
+                    spec["unit"],
+                    f"{float(bin_width):.10g}",
+                    f"{float(left):.10g}",
+                    f"{float(right):.10g}",
+                    int(count),
+                ])
+
+    def _save_histogram_summary_csv(self, csv_path, metric_key="Diameter", bin_width=1.0, value_range=None, summary_key="all_cameras"):
+        spec = self.HISTOGRAM_METRICS.get(metric_key, self.HISTOGRAM_METRICS["Diameter"])
+        _values_by_camera, edges, counts_by_camera = self._histogram_summary_counts(
+            metric_key,
+            bin_width,
+            value_range,
+        )
+
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f, delimiter=";")
+            writer.writerow([
+                "camera", "pair", "parameter", "unit", "bin_width",
+                "bin_left", "bin_right", "count"
+            ])
+            counts = counts_by_camera.get(summary_key)
+            if counts is None and edges.size > 1:
+                counts = np.zeros(edges.size - 1, dtype=int)
+            if counts is None:
+                return
+            for left, right, count in zip(edges[:-1], edges[1:], counts):
+                writer.writerow([
+                    summary_key,
+                    "all_pairs",
+                    metric_key,
+                    spec["unit"],
+                    f"{float(bin_width):.10g}",
+                    f"{float(left):.10g}",
+                    f"{float(right):.10g}",
+                    int(count),
+                ])
 
     def _save_histogram_png(self, record, folder, metric_key="Diameter", bin_width=1.0, value_range=None):
         folder = Path(folder)
@@ -1656,15 +1951,54 @@ class PTVViewerTab(QWidget):
         output_path = folder / self._histogram_filename(record, metric_key)
         if not cv2.imwrite(str(output_path), image):
             raise OSError(f"Не удалось записать файл: {output_path}")
-        return output_path
+        csv_path = output_path.with_suffix(".csv")
+        self._save_histogram_csv(csv_path, record, metric_key, bin_width, value_range)
+        return output_path, csv_path
+
+    def _save_histogram_summary_png(self, folder, metric_key="Diameter", bin_width=1.0, value_range=None, summary_key="all_cameras"):
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        image, _summary = self._create_histogram_summary_image(
+            metric_key=metric_key,
+            bin_width=bin_width,
+            value_range=value_range,
+            summary_key=summary_key,
+        )
+        output_path = folder / self._histogram_summary_filename(metric_key, summary_key)
+        if not cv2.imwrite(str(output_path), image):
+            raise OSError(f"Не удалось записать файл: {output_path}")
+        csv_path = output_path.with_suffix(".csv")
+        self._save_histogram_summary_csv(csv_path, metric_key, bin_width, value_range, summary_key)
+        return output_path, csv_path
+
+    def _save_histogram_summary_set(self, folder, metric_key="Diameter", bin_width=1.0, value_range=None):
+        saved_paths = []
+        for summary_key, _label in self.HISTOGRAM_SUMMARY_PLOTS:
+            saved_paths.append(self._save_histogram_summary_png(
+                folder,
+                metric_key=metric_key,
+                bin_width=bin_width,
+                value_range=value_range,
+                summary_key=summary_key,
+            ))
+        return saved_paths
 
     def _open_large(self):
-        record = self._selected_record()
-        if record is None:
-            return
         if self._display_mode() == "histogram":
+            if self._histogram_uses_summary():
+                if not self._records:
+                    return
+                dialog = PTVHistogramDialog(self, None, self, aggregate_by_camera=True)
+                dialog.exec_()
+                return
+            record = self._selected_record()
+            if record is None:
+                return
             dialog = PTVHistogramDialog(self, record, self)
             dialog.exec_()
+            return
+        record = self._selected_record()
+        if record is None:
             return
         if self._preview_image is None:
             self._preview_selected()
@@ -1679,12 +2013,19 @@ class PTVViewerTab(QWidget):
         dialog.exec_()
 
     def _save_selected(self):
+        if self._display_mode() == "histogram":
+            if self._histogram_uses_summary():
+                self._save_histogram_summary_interactive()
+                return
+            record = self._selected_record()
+            if record is None:
+                QMessageBox.warning(self, "Внимание", "Сначала выберите пару.")
+                return
+            self._save_selected_histogram(record)
+            return
         record = self._selected_record()
         if record is None:
             QMessageBox.warning(self, "Внимание", "Сначала выберите пару.")
-            return
-        if self._display_mode() == "histogram":
-            self._save_selected_histogram(record)
             return
         if not record.source_ok:
             QMessageBox.warning(self, "Внимание", "Исходные кадры не найдены.")
@@ -1703,18 +2044,37 @@ class PTVViewerTab(QWidget):
     def _save_selected_histogram(self, record):
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Выберите папку для PNG",
+            "Выберите папку для PNG + CSV",
             self._default_histogram_folder(),
         )
         if not folder:
             return
         try:
-            output_path = self._save_histogram_png(record, folder)
+            output_path, csv_path = self._save_histogram_png(record, folder)
         except OSError as exc:
             QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить PNG:\n{exc}")
             return
         self._log(f"Сохранена гистограмма: {output_path}")
-        self.status_label.setText(f"Сохранено: {output_path}")
+        self._log(f"CSV гистограммы: {csv_path}")
+        self.status_label.setText(f"Сохранено: {output_path}; CSV: {csv_path}")
+
+    def _save_histogram_summary_interactive(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку для PNG + CSV",
+            self._default_histogram_folder(),
+        )
+        if not folder:
+            return
+        try:
+            saved_paths = self._save_histogram_summary_set(folder)
+        except OSError as exc:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить PNG:\n{exc}")
+            return
+        for output_path, csv_path in saved_paths:
+            self._log(f"Сохранена суммарная гистограмма: {output_path}")
+            self._log(f"CSV суммарной гистограммы: {csv_path}")
+        self.status_label.setText(f"Сохранено графиков: {len(saved_paths)}")
 
     def _log(self, text: str):
         self.log_text.append(text)
@@ -2637,7 +2997,7 @@ class VectorPlotDialog(QDialog):
         file_label.setFixedWidth(50)
         self.file_line = QLineEdit(str(self.csv_path))
         self.file_line.setReadOnly(True)
-        self.save_btn = QPushButton("Сохранить PNG")
+        self.save_btn = QPushButton("Сохранить PNG + CSV")
         header.addWidget(file_label)
         header.addWidget(self.file_line)
         header.addWidget(self.save_btn)
@@ -3307,7 +3667,7 @@ class VectorPlotDialog(QDialog):
         default_path = self.csv_path.with_name(f"{self.csv_path.stem}_vector_plot.png")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Сохранить график",
+            "Сохранить график PNG + CSV",
             str(default_path),
             "PNG files (*.png);;All files (*.*)",
         )
