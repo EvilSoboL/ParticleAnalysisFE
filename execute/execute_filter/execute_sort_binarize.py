@@ -54,6 +54,8 @@ class SortBinarizeParameters:
     enable_progress_callback: bool = True  # Включить callback для прогресса
     output_base_folder: Optional[str] = None
     experiment_name: Optional[str] = None
+    median_filter_enabled: bool = False
+    median_kernel_size: int = 5
 
     # GUI ПОДСКАЗКИ (не используются в обработке, только для GUI)
     threshold_min: int = 0  # Минимальное значение для slider
@@ -90,6 +92,9 @@ class SortBinarizeParameters:
         # Проверка порога
         if not (self.threshold_min <= self.threshold <= self.threshold_max):
             return False, f"Порог должен быть в диапазоне [{self.threshold_min}, {self.threshold_max}]"
+
+        if self.median_filter_enabled and self.median_kernel_size not in (3, 5):
+            return False, "Размер окна медианного фильтра для 16-bit PNG должен быть 3 или 5"
 
         if self.output_base_folder:
             output_path = Path(self.output_base_folder)
@@ -143,11 +148,15 @@ class SortBinarizeExecutor:
                 input_folder=parameters.input_folder,
                 threshold=parameters.threshold,
                 validate_format=parameters.validate_format,
-                output_base_folder=parameters.output_base_folder
+                output_base_folder=parameters.output_base_folder,
+                median_filter_enabled=parameters.median_filter_enabled,
+                median_kernel_size=parameters.median_kernel_size,
             )
             logger.info(
                 f"Параметры установлены: input_folder={parameters.input_folder}, "
-                f"threshold={parameters.threshold}, output_base_folder={parameters.output_base_folder}"
+                f"threshold={parameters.threshold}, output_base_folder={parameters.output_base_folder}, "
+                f"median_filter_enabled={parameters.median_filter_enabled}, "
+                f"median_kernel_size={parameters.median_kernel_size}"
             )
             return True, ""
         except Exception as e:
@@ -208,6 +217,11 @@ class SortBinarizeExecutor:
         logger.info("ЗАПУСК СОРТИРОВКИ И БИНАРИЗАЦИИ")
         logger.info(f"Входная папка: {self.parameters.input_folder}")
         logger.info(f"Порог: {self.parameters.threshold}")
+        if self.parameters.median_filter_enabled:
+            logger.info(
+                f"Медианный фильтр: "
+                f"{self.parameters.median_kernel_size}x{self.parameters.median_kernel_size}"
+            )
         if self.parameters.experiment_name:
             logger.info(f"Experiment: {self.parameters.experiment_name}")
         if self.parameters.output_base_folder:
@@ -271,7 +285,9 @@ class SortBinarizeExecutor:
             'expected_cam2_pairs': len(png_files) // 4,
             'input_folder': str(input_path),
             'output_folder': str(output_base / f"binary_filter_{self.parameters.threshold}"),
-            'threshold': self.parameters.threshold
+            'threshold': self.parameters.threshold,
+            'median_filter_enabled': self.parameters.median_filter_enabled,
+            'median_kernel_size': self.parameters.median_kernel_size,
         }
 
 
@@ -279,6 +295,8 @@ def run_sort_and_binarize(input_folder: str, threshold: int = 10000,
                           validate_format: bool = True,
                           output_base_folder: Optional[str] = None,
                           experiment_name: Optional[str] = None,
+                          median_filter_enabled: bool = False,
+                          median_kernel_size: int = 5,
                           progress_callback: Optional[Callable] = None) -> SortBinarizeResult:
     """
     Удобная функция для запуска сортировки и бинаризации без создания объектов.
@@ -305,6 +323,8 @@ def run_sort_and_binarize(input_folder: str, threshold: int = 10000,
         validate_format=validate_format,
         output_base_folder=output_base_folder,
         experiment_name=experiment_name,
+        median_filter_enabled=median_filter_enabled,
+        median_kernel_size=median_kernel_size,
         enable_progress_callback=progress_callback is not None
     )
 

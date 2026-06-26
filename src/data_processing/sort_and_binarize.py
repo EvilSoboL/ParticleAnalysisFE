@@ -65,7 +65,9 @@ class SortAndBinarize:
 
     def __init__(self, input_folder: str, threshold: int = 10000,
                  validate_format: bool = True,
-                 output_base_folder: Optional[str] = None):
+                 output_base_folder: Optional[str] = None,
+                 median_filter_enabled: bool = False,
+                 median_kernel_size: int = 5):
         """
         Инициализация.
 
@@ -77,11 +79,15 @@ class SortAndBinarize:
         self.input_folder = Path(input_folder)
         self.threshold = threshold
         self.validate_format = validate_format
+        self.median_filter_enabled = median_filter_enabled
+        self.median_kernel_size = median_kernel_size
         self._cancel_requested = False
         self._progress_callback: Optional[Callable[[SortBinarizeProgress], None]] = None
 
         if not self.input_folder.exists():
             raise FileNotFoundError(f"Входная папка не найдена: {input_folder}")
+        if self.median_filter_enabled and self.median_kernel_size not in (3, 5):
+            raise ValueError("Размер окна медианного фильтра для 16-bit PNG должен быть 3 или 5")
 
         # Выходная структура: {input}_cam_sorted/binary_filter_{threshold}/cam_1|cam_2
         self.sorted_folder = Path(output_base_folder) if output_base_folder else Path(f"{input_folder}_cam_sorted")
@@ -193,6 +199,11 @@ class SortAndBinarize:
 
         logger.info("Начало сортировки и бинаризации...")
         logger.info(f"Порог бинаризации: {self.threshold}")
+        if self.median_filter_enabled:
+            logger.info(
+                f"Медианный фильтр перед бинаризацией: "
+                f"{self.median_kernel_size}x{self.median_kernel_size}"
+            )
 
         for i, img_path in enumerate(images):
             if self._cancel_requested:
@@ -226,6 +237,9 @@ class SortAndBinarize:
             # Для cam_1: отражение по горизонтальной оси
             if is_cam1:
                 img = cv2.flip(img, 0)
+
+            if self.median_filter_enabled:
+                img = cv2.medianBlur(img, self.median_kernel_size)
 
             # Бинаризация: 16-bit → 8-bit (0 или 255)
             binary = np.where(img >= self.threshold, 255, 0).astype(np.uint8)

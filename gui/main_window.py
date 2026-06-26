@@ -452,6 +452,26 @@ class SortBinarizeTab(QWidget):
         h.addStretch()
         layout.addLayout(h)
 
+        median_layout = QHBoxLayout()
+        self.median_filter_cb = QCheckBox("Медианный фильтр перед порогом")
+        self.median_kernel_combo = QComboBox()
+        self.median_kernel_combo.addItem("3x3", 3)
+        self.median_kernel_combo.addItem("5x5", 5)
+        self.median_kernel_combo.setCurrentIndex(1)
+        _set_tooltip(
+            "Опциональная предварительная обработка перед пороговой бинаризацией.\n"
+            "Фильтр подавляет одиночный шум и мелкие выбросы яркости.\n"
+            "Для 16-bit PNG OpenCV поддерживает окна 3x3 и 5x5; по умолчанию выбрано 5x5.",
+            self.median_filter_cb,
+            self.median_kernel_combo,
+        )
+        median_layout.addWidget(self.median_filter_cb)
+        median_layout.addWidget(QLabel("Окно:"))
+        median_layout.addWidget(self.median_kernel_combo)
+        median_layout.addStretch()
+        layout.addLayout(median_layout)
+        self._update_median_controls()
+
         # Validate format
         self.validate_cb = QCheckBox("Проверять формат (16-bit PNG)")
         self.validate_cb.setChecked(True)
@@ -486,6 +506,10 @@ class SortBinarizeTab(QWidget):
         self.run_btn.clicked.connect(self._run)
         self.cancel_btn.clicked.connect(self._cancel)
         self.input_line.textEdited.connect(self._clear_prepared_experiment)
+        self.median_filter_cb.toggled.connect(self._update_median_controls)
+
+    def _update_median_controls(self):
+        self.median_kernel_combo.setEnabled(self.median_filter_cb.isChecked())
 
     def _run(self):
         folder = self.input_line.text().strip()
@@ -500,6 +524,8 @@ class SortBinarizeTab(QWidget):
             validate_format=self.validate_cb.isChecked(),
             output_base_folder=output_base or None,
             experiment_name=self._experiment_name,
+            median_filter_enabled=self.median_filter_cb.isChecked(),
+            median_kernel_size=self.median_kernel_combo.currentData(),
         )
 
         self._executor = SortBinarizeExecutor()
@@ -518,6 +544,11 @@ class SortBinarizeTab(QWidget):
         if output_base:
             self._log(f"  Папка вывода: {output_base}")
         self._log(f"  Порог: {self.threshold_spin.value()}")
+        if self.median_filter_cb.isChecked():
+            kernel_size = self.median_kernel_combo.currentData()
+            self._log(f"  Медианный фильтр: {kernel_size}x{kernel_size}")
+        else:
+            self._log("  Медианный фильтр: выключен")
         self._log(f"  Проверка: {self.validate_cb.isChecked()}")
         self._log("")
 
@@ -2221,6 +2252,15 @@ class VectorPlotDialog(QDialog):
         self._connect_controls()
         self._schedule_redraw()
 
+    @staticmethod
+    def _make_axis_limit_spin():
+        spin = QDoubleSpinBox()
+        spin.setRange(-1000000000.0, 1000000000.0)
+        spin.setDecimals(3)
+        spin.setSingleStep(1.0)
+        spin.setKeyboardTracking(False)
+        return spin
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
@@ -2344,6 +2384,39 @@ class VectorPlotDialog(QDialog):
         self.color_by_combo.addItems(["L", "dx", "dy", "angle"])
         color_row.addWidget(self.color_by_combo)
         plot_layout.addLayout(color_row)
+
+        crop_title = QLabel("Обрезка осей")
+        plot_layout.addWidget(crop_title)
+
+        crop_x_row = QHBoxLayout()
+        self.crop_x_cb = QCheckBox("X")
+        self.x_min_spin = self._make_axis_limit_spin()
+        self.x_max_spin = self._make_axis_limit_spin()
+        crop_x_row.addWidget(self.crop_x_cb)
+        crop_x_row.addWidget(QLabel("min:"))
+        crop_x_row.addWidget(self.x_min_spin)
+        crop_x_row.addWidget(QLabel("max:"))
+        crop_x_row.addWidget(self.x_max_spin)
+        plot_layout.addLayout(crop_x_row)
+
+        crop_y_row = QHBoxLayout()
+        self.crop_y_cb = QCheckBox("Y")
+        self.y_min_spin = self._make_axis_limit_spin()
+        self.y_max_spin = self._make_axis_limit_spin()
+        crop_y_row.addWidget(self.crop_y_cb)
+        crop_y_row.addWidget(QLabel("min:"))
+        crop_y_row.addWidget(self.y_min_spin)
+        crop_y_row.addWidget(QLabel("max:"))
+        crop_y_row.addWidget(self.y_max_spin)
+        plot_layout.addLayout(crop_y_row)
+
+        crop_actions_row = QHBoxLayout()
+        self.fit_crop_btn = QPushButton("По данным")
+        self.reset_crop_btn = QPushButton("Сбросить")
+        crop_actions_row.addWidget(self.fit_crop_btn)
+        crop_actions_row.addWidget(self.reset_crop_btn)
+        plot_layout.addLayout(crop_actions_row)
+        self._update_crop_controls()
         controls_layout.addWidget(plot_group)
 
         self.status_label = QLabel("Готово")
@@ -2363,9 +2436,14 @@ class VectorPlotDialog(QDialog):
         self.y_origin_spin.valueChanged.connect(self._origin_changed)
         for spin in (
             self.rotation_spin, self.scale_spin, self.dt_spin,
-            self.arrow_scale_spin, self.arrow_width_spin
+            self.arrow_scale_spin, self.arrow_width_spin,
+            self.x_min_spin, self.x_max_spin, self.y_min_spin, self.y_max_spin
         ):
             spin.valueChanged.connect(self._schedule_redraw)
+        self.crop_x_cb.stateChanged.connect(self._crop_toggled)
+        self.crop_y_cb.stateChanged.connect(self._crop_toggled)
+        self.fit_crop_btn.clicked.connect(self._fit_crop_to_data)
+        self.reset_crop_btn.clicked.connect(self._reset_crop)
         self.units_combo.currentTextChanged.connect(self._units_changed)
         self.cmap_combo.currentTextChanged.connect(self._schedule_redraw)
         self.color_by_combo.currentTextChanged.connect(self._schedule_redraw)
@@ -2532,8 +2610,98 @@ class VectorPlotDialog(QDialog):
         self._schedule_redraw()
 
     def _units_changed(self, *_args):
+        self._reset_crop(schedule=False)
         self._update_source_controls()
         self._schedule_redraw()
+
+    def _crop_toggled(self, *_args):
+        self._update_crop_controls()
+        self._schedule_redraw()
+
+    def _update_crop_controls(self):
+        x_enabled = self.crop_x_cb.isChecked()
+        y_enabled = self.crop_y_cb.isChecked()
+        self.x_min_spin.setEnabled(x_enabled)
+        self.x_max_spin.setEnabled(x_enabled)
+        self.y_min_spin.setEnabled(y_enabled)
+        self.y_max_spin.setEnabled(y_enabled)
+
+    @staticmethod
+    def _set_checked_silent(checkbox, checked):
+        checkbox.blockSignals(True)
+        checkbox.setChecked(checked)
+        checkbox.blockSignals(False)
+
+    @staticmethod
+    def _set_spin_silent(spin, value):
+        spin.blockSignals(True)
+        spin.setValue(float(value))
+        spin.blockSignals(False)
+
+    @staticmethod
+    def _data_limits(values):
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size == 0:
+            return -1.0, 1.0
+        min_value = float(finite_values.min())
+        max_value = float(finite_values.max())
+        if math.isclose(min_value, max_value):
+            padding = max(abs(min_value) * 0.05, 1.0)
+            return min_value - padding, max_value + padding
+        return min_value, max_value
+
+    def _fit_crop_to_data(self):
+        if self._load_error or self._vectors.size == 0:
+            return
+        x, y, *_ = self._transformed_vectors()
+        x_min, x_max = self._data_limits(x)
+        y_min, y_max = self._data_limits(y)
+
+        self._set_checked_silent(self.crop_x_cb, True)
+        self._set_checked_silent(self.crop_y_cb, True)
+        self._set_spin_silent(self.x_min_spin, x_min)
+        self._set_spin_silent(self.x_max_spin, x_max)
+        self._set_spin_silent(self.y_min_spin, y_min)
+        self._set_spin_silent(self.y_max_spin, y_max)
+        self._update_crop_controls()
+        self._schedule_redraw()
+
+    def _reset_crop(self, schedule=True):
+        self._set_checked_silent(self.crop_x_cb, False)
+        self._set_checked_silent(self.crop_y_cb, False)
+        self._update_crop_controls()
+        if schedule:
+            self._schedule_redraw()
+
+    def _axis_unit_label(self):
+        return "px" if self._is_pixel_origin_view() else "мм"
+
+    def _apply_axis_crop(self, ax):
+        status_lines = []
+        crop_applied = False
+        unit = self._axis_unit_label()
+
+        if self.crop_x_cb.isChecked():
+            x_min = min(self.x_min_spin.value(), self.x_max_spin.value())
+            x_max = max(self.x_min_spin.value(), self.x_max_spin.value())
+            if math.isclose(x_min, x_max):
+                status_lines.append("Обрезка X не применена: min = max")
+            else:
+                ax.set_xlim(x_min, x_max)
+                crop_applied = True
+                status_lines.append(f"Обрезка X: [{x_min:.3f}, {x_max:.3f}] {unit}")
+
+        if self.crop_y_cb.isChecked():
+            y_min = min(self.y_min_spin.value(), self.y_max_spin.value())
+            y_max = max(self.y_min_spin.value(), self.y_max_spin.value())
+            if math.isclose(y_min, y_max):
+                status_lines.append("Обрезка Y не применена: min = max")
+            else:
+                ax.set_ylim(y_min, y_max)
+                crop_applied = True
+                status_lines.append(f"Обрезка Y: [{y_min:.3f}, {y_max:.3f}] {unit}")
+
+        return status_lines, crop_applied
 
     def _pick_origin_toggled(self, checked):
         if self._source_mode == "physical":
@@ -2694,7 +2862,8 @@ class VectorPlotDialog(QDialog):
         ax.set_title(self.csv_path.name)
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
-        ax.set_aspect("equal", adjustable="datalim")
+        crop_status_lines, crop_applied = self._apply_axis_crop(ax)
+        ax.set_aspect("equal", adjustable="box" if crop_applied else "datalim")
         ax.grid(True, alpha=0.3)
         if self._source_mode != "physical" and self.units_combo.currentIndex() == 0:
             self._draw_origin_cursor(ax)
@@ -2713,6 +2882,7 @@ class VectorPlotDialog(QDialog):
             )
             if not self._origin_confirmed:
                 status_lines.append("Угол заблокирован до фиксации origin")
+        status_lines.extend(crop_status_lines)
         status_lines.extend([
             f"Векторов: {len(x)}",
             f"dx: [{dx.min():.6f}, {dx.max():.6f}] {unit}",
