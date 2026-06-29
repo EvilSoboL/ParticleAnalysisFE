@@ -1,11 +1,5 @@
 """
-GUI приложение ParticleAnalysis на PyQt5.
-
-Четыре вкладки:
-1. Sort + Binarize — сортировка и бинаризация
-2. PTV Analysis — PTV анализ
-3. PTV Processing — обработка результатов PTV (фильтрация, усреднение, визуализация)
-4. Coordinate Transform — перевод координат и скоростей из пикселей в метры/м/с
+GUI приложение ParticleAnalysis на PyQt5 с ручными этапами и автопайплайном.
 """
 
 import sys
@@ -59,6 +53,7 @@ from execute.execute_processing.vector_plot import (
 from execute.execute_processing.coordinate_transform import (
     CoordinateTransformExecutor, CoordinateTransformParameters
 )
+from gui.automated_pipeline_tab import AutomatedPipelineTab
 
 
 _EXPERIMENT_STATUS_LABELS = {
@@ -3754,6 +3749,7 @@ class MainWindow(QMainWindow):
         self.resize(900, 650)
 
         tabs = QTabWidget()
+        tabs.addTab(AutomatedPipelineTab(), "Автопайплайн")
         self.sort_binarize_tab = SortBinarizeTab()
         self.prepare_experiments_tab = PrepareExperimentsTab(self.sort_binarize_tab, tabs)
         tabs.addTab(self.prepare_experiments_tab, "Подготовка экспериментов")

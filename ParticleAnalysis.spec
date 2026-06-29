@@ -17,6 +17,8 @@ a = Analysis(
         'execute.execute_processing.vector_average',
         'execute.execute_processing.vector_plot',
         'execute.execute_processing.coordinate_transform',
+        'execute.full_pipeline',
+        'gui.automated_pipeline_tab',
     ],
     hookspath=[],
     hooksconfig={},
