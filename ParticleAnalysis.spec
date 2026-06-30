@@ -5,7 +5,7 @@ a = Analysis(
     ['gui\\main_window.py'],
     pathex=['.'],
     binaries=[],
-    datas=[],
+    datas=[('assets/app_icon.ico', 'assets')],
     hiddenimports=[
         'execute',
         'execute.execute_filter',
@@ -21,9 +21,31 @@ a = Analysis(
         'gui.automated_pipeline_tab',
     ],
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={
+        'matplotlib': {
+            'backends': ['Qt5Agg', 'Agg'],
+        },
+    },
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'torch',
+        'torchvision',
+        'torchaudio',
+        'tensorboard',
+        'tensorflow',
+        'IPython',
+        'ipykernel',
+        'jupyter',
+        'jupyter_client',
+        'jupyter_core',
+        'nbconvert',
+        'nbformat',
+        'notebook',
+        'pyarrow',
+        'fsspec',
+        'tkinter',
+        '_tkinter',
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -48,4 +70,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets\\app_icon.ico',
 )

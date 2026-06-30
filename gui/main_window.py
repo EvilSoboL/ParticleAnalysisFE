@@ -26,7 +26,17 @@ from PyQt5.QtWidgets import (
     QDialog, QSplitter, QSizePolicy
 )
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF, QTimer
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QIcon
+
+
+def _resource_path(*parts):
+    base_path = Path(getattr(sys, "_MEIPASS", project_root))
+    return base_path.joinpath(*parts)
+
+
+def _app_icon():
+    icon_path = _resource_path("assets", "app_icon.ico")
+    return QIcon(str(icon_path)) if icon_path.exists() else QIcon()
 
 from execute.execute_filter.execute_sort_binarize import (
     SortBinarizeExecutor, SortBinarizeParameters
@@ -3746,6 +3756,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ParticleAnalysis")
+        icon = _app_icon()
+        if not icon.isNull():
+            self.setWindowIcon(icon)
         self.resize(900, 650)
 
         tabs = QTabWidget()
@@ -3766,6 +3779,9 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 def main():
     app = QApplication(sys.argv)
+    icon = _app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
