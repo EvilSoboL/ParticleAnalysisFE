@@ -64,6 +64,7 @@ from execute.execute_processing.coordinate_transform import (
     CoordinateTransformExecutor, CoordinateTransformParameters
 )
 from gui.automated_pipeline_tab import AutomatedPipelineTab
+from gui.summary_analysis_tab import SummaryAnalysisTab
 
 
 _EXPERIMENT_STATUS_LABELS = {
@@ -3763,6 +3764,7 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(AutomatedPipelineTab(), "Автопайплайн")
+        tabs.addTab(SummaryAnalysisTab(), "Суммарный анализ")
         self.sort_binarize_tab = SortBinarizeTab()
         self.prepare_experiments_tab = PrepareExperimentsTab(self.sort_binarize_tab, tabs)
         tabs.addTab(self.prepare_experiments_tab, "Подготовка экспериментов")
