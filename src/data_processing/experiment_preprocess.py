@@ -38,6 +38,7 @@ class ExperimentRecord:
     skipped: bool = False
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    input_mode: str = "actual_flow"
 
     @property
     def status(self) -> str:
@@ -110,6 +111,64 @@ def scan_experiment_root(root_folder: str) -> ExperimentScanResult:
         errors.append(f"No experiment*.afxml files found in {root_folder}")
 
     return ExperimentScanResult(root_folder=str(root_path), records=records, errors=errors)
+
+
+def get_sequence_frames(folder: Path) -> List[Path]:
+    """Return frame_<number>.png files in numeric order, validating the sequence."""
+    try:
+        png_files = list(folder.glob("*.png"))
+    except OSError as exc:
+        raise ValueError(f"Не удалось прочитать папку кадров: {exc}") from exc
+
+    if not png_files:
+        raise ValueError("В папке не найдены PNG-кадры")
+
+    indexed: dict[int, Path] = {}
+    for path in png_files:
+        match = re.fullmatch(r"frame_(\d+)\.png", path.name)
+        if not match:
+            raise ValueError(f"Недопустимое имя PNG-файла: {path.name}. Ожидается frame_<число>.png")
+        index = int(match.group(1))
+        if index in indexed:
+            raise ValueError(f"Повторяется номер кадра {index}: {indexed[index].name} и {path.name}")
+        indexed[index] = path
+
+    frames = [indexed[index] for index in sorted(indexed)]
+    if len(frames) < 2:
+        raise ValueError("Для серии требуется не менее двух кадров")
+    if len(frames) % 2:
+        raise ValueError(f"Количество кадров должно быть чётным: {len(frames)}")
+    for previous, current in zip(sorted(indexed), sorted(indexed)[1:]):
+        if current != previous + 1:
+            raise ValueError(f"В нумерации кадров пропуск: после frame_{previous}.png отсутствует frame_{previous + 1}.png")
+    return frames
+
+
+def scan_frame_sequence(folder: str) -> ExperimentScanResult:
+    """Scan a directory containing a single numbered PNG frame sequence."""
+    folder_path = Path(folder)
+    if not folder_path.exists():
+        return ExperimentScanResult(str(folder_path), [], [f"Папка кадров не существует: {folder}"])
+    if not folder_path.is_dir():
+        return ExperimentScanResult(str(folder_path), [], [f"Путь к кадрам не является папкой: {folder}"])
+
+    name = folder_path.parent.name if folder_path.name.lower() == "frames" else folder_path.name
+    record = ExperimentRecord(
+        experiment_id=name,
+        name=name,
+        safe_name=sanitize_experiment_name(name),
+        source_folder=str(folder_path),
+        afxml_path="",
+        input_mode="frame_sequence",
+    )
+    try:
+        frames = get_sequence_frames(folder_path)
+        record.png_count = len(frames)
+        record.sort_ready = True
+    except ValueError as exc:
+        record.png_count = len(list(folder_path.glob("*.png")))
+        record.errors.append(str(exc))
+    return ExperimentScanResult(str(folder_path), [record])
 
 
 def parse_experiment_afxml(afxml_path: Path) -> ExperimentRecord:
