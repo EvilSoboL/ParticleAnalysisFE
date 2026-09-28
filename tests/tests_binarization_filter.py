@@ -5,10 +5,12 @@
 Тесты вызываются из кода, не из CLI.
 """
 
+import cv2
 import numpy as np
 from PIL import Image
 from pathlib import Path
 import shutil
+from src.data_processing.sort_and_binarize import SortAndBinarize
 from src.filters.binarization_filter import (
     BinarizationFilter,
     BinarizationProgress,
@@ -515,6 +517,101 @@ def run_tests(test_data_path: str, cleanup: bool = True) -> dict:
     tester = TestBinarizationFilter(test_data_path, cleanup=cleanup)
     return tester.run_all_tests()
 
+
+def _write_frames(folder, count):
+    folder.mkdir()
+    originals = {}
+    for index in range(1, count + 1):
+        image = np.zeros((3, 4), dtype=np.uint16)
+        image[0, index % 4] = 20000 + index
+        path = folder / f"frame_{index}.png"
+        assert cv2.imwrite(str(path), image)
+        originals[path.name] = cv2.imread(str(path), cv2.IMREAD_UNCHANGED).copy()
+    return originals
+
+
+def test_sequence_writes_numeric_pairs_without_flipping_or_changing_sources(tmp_path):
+    source = tmp_path / "frames"
+    originals = _write_frames(source, 20)
+    processor = SortAndBinarize(
+        str(source), threshold=10000, output_base_folder=str(tmp_path / "out"),
+        input_mode="frame_sequence",
+    )
+
+    result = processor.process()
+
+    output = tmp_path / "out" / "binary_filter_10000"
+    assert result.success
+    assert result.cam1_count == 20
+    assert result.cam2_count == 0
+    assert {path.name for path in (output / "cam_1").glob("*.png")} == {
+        f"{pair}_{letter}.png" for pair in range(1, 11) for letter in ("a", "b")
+    }
+    assert not (output / "cam_2").exists()
+    for source_name, original in originals.items():
+        current = cv2.imread(str(source / source_name), cv2.IMREAD_UNCHANGED)
+        assert np.array_equal(current, original)
+    saved = cv2.imread(str(output / "cam_1" / "1_a.png"), cv2.IMREAD_UNCHANGED)
+    assert saved[0, 1] == 255
+    assert saved[2, 1] == 0
+
+
+def test_odd_sequence_fails_before_creating_output(tmp_path):
+    source = tmp_path / "frames"
+    _write_frames(source, 3)
+    processor = SortAndBinarize(
+        str(source), output_base_folder=str(tmp_path / "out"), input_mode="frame_sequence",
+    )
+
+    result = processor.process()
+
+    assert not result.success
+    assert "чётным" in result.errors[0]
+    assert not (tmp_path / "out").exists()
+
+
+def test_nonempty_sequence_output_is_rejected_without_overwriting(tmp_path):
+    source = tmp_path / "frames"
+    _write_frames(source, 2)
+    output = tmp_path / "out" / "binary_filter_10000"
+    output.mkdir(parents=True)
+    sentinel = output / "old-result.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    processor = SortAndBinarize(
+        str(source), threshold=10000, output_base_folder=str(tmp_path / "out"),
+        input_mode="frame_sequence",
+    )
+
+    result = processor.process()
+
+    assert not result.success
+    assert "другую папку результата" in result.errors[0]
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_actual_flow_default_keeps_camera_layout_and_reflection(tmp_path):
+    source = tmp_path / "actual"
+    source.mkdir()
+    image = np.zeros((3, 4), dtype=np.uint16)
+    image[0, 1] = 20000
+    for name in ("image_a.png", "image_b.png", "image_c.png", "image_d.png"):
+        assert cv2.imwrite(str(source / name), image)
+    processor = SortAndBinarize(
+        str(source), threshold=10000, output_base_folder=str(tmp_path / "actual-out"),
+    )
+
+    result = processor.process()
+
+    output = tmp_path / "actual-out" / "binary_filter_10000"
+    assert result.success
+    assert result.cam1_count == 2
+    assert result.cam2_count == 2
+    assert (output / "cam_1" / "1_a.png").exists()
+    assert (output / "cam_1" / "1_b.png").exists()
+    assert (output / "cam_2").is_dir()
+    saved = cv2.imread(str(output / "cam_1" / "1_a.png"), cv2.IMREAD_UNCHANGED)
+    assert saved[2, 1] == 255
+    assert saved[0, 1] == 0
 
 if __name__ == "__main__":
     # Путь к тестовым данным - папка _cam_sorted с подпапками cam_1 и cam_2

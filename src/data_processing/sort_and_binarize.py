@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional, Callable, List
 from dataclasses import dataclass, field
 import logging
+from src.data_processing.experiment_preprocess import get_sequence_frames
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,7 +68,8 @@ class SortAndBinarize:
                  validate_format: bool = True,
                  output_base_folder: Optional[str] = None,
                  median_filter_enabled: bool = False,
-                 median_kernel_size: int = 5):
+                 median_kernel_size: int = 5,
+                 input_mode: str = "actual_flow"):
         """
         Инициализация.
 
@@ -77,6 +79,9 @@ class SortAndBinarize:
             validate_format: Проверять ли что изображения 16-bit
         """
         self.input_folder = Path(input_folder)
+        if input_mode not in ("actual_flow", "frame_sequence"):
+            raise ValueError(f"Неизвестный режим обработки: {input_mode}")
+        self.input_mode = input_mode
         self.threshold = threshold
         self.validate_format = validate_format
         self.median_filter_enabled = median_filter_enabled
@@ -109,11 +114,14 @@ class SortAndBinarize:
         self.sorted_folder.mkdir(parents=True, exist_ok=True)
         self.output_folder.mkdir(parents=True, exist_ok=True)
         self.cam1_folder.mkdir(parents=True, exist_ok=True)
-        self.cam2_folder.mkdir(parents=True, exist_ok=True)
+        if self.input_mode == "actual_flow":
+            self.cam2_folder.mkdir(parents=True, exist_ok=True)
         logger.info(f"Создана структура папок: {self.output_folder}")
 
     def _get_sorted_images(self) -> List[Path]:
         """Получает отсортированный список PNG изображений из входной папки."""
+        if self.input_mode == "frame_sequence":
+            return get_sequence_frames(self.input_folder)
         images = sorted(self.input_folder.glob("*.png"))
         if not images:
             raise ValueError(f"В папке {self.input_folder} не найдено PNG изображений")
@@ -163,18 +171,36 @@ class SortAndBinarize:
         self._cancel_requested = False
         errors: List[str] = []
 
-        # Создание структуры папок
-        self._create_output_structure()
-
         # Получение списка изображений
         try:
             images = self._get_sorted_images()
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             return SortBinarizeResult(
                 success=False, cam1_count=0, cam2_count=0,
                 total_processed=0, output_folder=str(self.output_folder),
                 threshold=self.threshold, errors=[str(e)]
             )
+
+        # A sequence rerun must not mix pairs with files from a previous run.
+        if self.input_mode == "frame_sequence" and self.output_folder.exists():
+            try:
+                has_existing_data = any(self.output_folder.iterdir())
+            except OSError as e:
+                has_existing_data = True
+                existing_data_error = str(e)
+            else:
+                existing_data_error = ""
+            if has_existing_data:
+                reason = f": {existing_data_error}" if existing_data_error else ""
+                return SortBinarizeResult(
+                    success=False, cam1_count=0, cam2_count=0,
+                    total_processed=0, output_folder=str(self.output_folder),
+                    threshold=self.threshold,
+                    errors=[f"Папка результата уже содержит данные{reason}. Укажите другую папку результата."],
+                )
+
+        # Создание структуры папок только после проверки входа и результата.
+        self._create_output_structure()
 
         total_files = len(images)
 
@@ -212,7 +238,8 @@ class SortAndBinarize:
                 break
 
             position_in_cycle = i % 4
-            is_cam1 = position_in_cycle < 2
+            is_sequence = self.input_mode == "frame_sequence"
+            is_cam1 = is_sequence or position_in_cycle < 2
             camera_name = "cam_1" if is_cam1 else "cam_2"
 
             # Прогресс
@@ -234,8 +261,8 @@ class SortAndBinarize:
                 errors.append(f"Не удалось загрузить: {img_path.name}")
                 continue
 
-            # Для cam_1: отражение по горизонтальной оси
-            if is_cam1:
+            # Actual Flow сохраняет своё отражение; серия остаётся в исходной ориентации.
+            if is_cam1 and not is_sequence:
                 img = cv2.flip(img, 0)
 
             if self.median_filter_enabled:
@@ -245,7 +272,13 @@ class SortAndBinarize:
             binary = np.where(img >= self.threshold, 255, 0).astype(np.uint8)
 
             # Определение выходной папки и имени файла
-            if is_cam1:
+            if is_sequence:
+                pair_number = i // 2 + 1
+                suffix = "a" if i % 2 == 0 else "b"
+                new_filename = f"{pair_number}_{suffix}.png"
+                output_path = self.cam1_folder / new_filename
+                cam1_count += 1
+            elif is_cam1:
                 new_filename = self._generate_new_filename(img_path.name, cam1_pair_counter)
                 output_path = self.cam1_folder / new_filename
                 cam1_count += 1
