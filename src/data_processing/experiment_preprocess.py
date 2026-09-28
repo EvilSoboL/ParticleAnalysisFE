@@ -10,6 +10,8 @@ can use before running Sort + Binarize.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import math
 from pathlib import Path
 from typing import List, Optional
 import re
@@ -21,6 +23,18 @@ WINDOWS_RESERVED_NAMES = {
     "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
     "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 }
+
+
+@dataclass
+class SequenceMetadata:
+    """Optional acquisition metadata supplied next to a frame sequence."""
+
+    width_px: Optional[int] = None
+    height_px: Optional[int] = None
+    bit_depth: Optional[int] = None
+    scale_m_per_px: Optional[float] = None
+    dt_seconds: Optional[float] = None
+    dark_particles: Optional[bool] = None
 
 
 @dataclass
@@ -39,6 +53,7 @@ class ExperimentRecord:
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     input_mode: str = "actual_flow"
+    sequence_metadata: Optional[SequenceMetadata] = None
 
     @property
     def status(self) -> str:
@@ -161,6 +176,7 @@ def scan_frame_sequence(folder: str) -> ExperimentScanResult:
         afxml_path="",
         input_mode="frame_sequence",
     )
+    record.sequence_metadata = _read_sequence_metadata(folder_path.parent / "config.json", record.warnings)
     try:
         frames = get_sequence_frames(folder_path)
         record.png_count = len(frames)
@@ -169,6 +185,71 @@ def scan_frame_sequence(folder: str) -> ExperimentScanResult:
         record.png_count = len(list(folder_path.glob("*.png")))
         record.errors.append(str(exc))
     return ExperimentScanResult(str(folder_path), [record])
+
+
+def _read_sequence_metadata(config_path: Path, warnings: List[str]) -> Optional[SequenceMetadata]:
+    """Read recognized optional values from the sibling config.json."""
+    metadata = SequenceMetadata()
+    try:
+        with config_path.open("r", encoding="utf-8") as config_file:
+            config = json.load(config_file)
+    except FileNotFoundError:
+        warnings.append(f"Файл метаданных не найден: {config_path}")
+        return metadata
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        warnings.append(f"Не удалось прочитать config.json: {exc}")
+        return metadata
+
+    if not isinstance(config, dict):
+        warnings.append("Некорректный config.json: ожидается JSON-объект")
+        return metadata
+
+    camera = config.get("camera", {})
+    if not isinstance(camera, dict):
+        warnings.append("Некорректное поле camera в config.json")
+        camera = {}
+    background = config.get("background", {})
+    if not isinstance(background, dict):
+        warnings.append("Некорректное поле background в config.json")
+        background = {}
+
+    def positive_number(section: dict, key: str, label: str, *, integer: bool = False):
+        if key not in section:
+            return None
+        value = section[key]
+        valid_type = type(value) is int if integer else type(value) in (int, float)
+        finite = isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
+        if not valid_type or not finite or value <= 0:
+            warnings.append(f"Некорректное значение {label} в config.json")
+            return None
+        if integer and value <= 0:
+            warnings.append(f"Некорректное значение {label} в config.json")
+            return None
+        return value
+
+    metadata.width_px = positive_number(camera, "width_px", "camera.width_px", integer=True)
+    metadata.height_px = positive_number(camera, "height_px", "camera.height_px", integer=True)
+    metadata.bit_depth = positive_number(camera, "bit_depth", "camera.bit_depth", integer=True)
+    if metadata.bit_depth not in (None, 8, 16):
+        warnings.append("Некорректное значение camera.bit_depth в config.json: допустимы 8 или 16")
+        metadata.bit_depth = None
+
+    scale = positive_number(camera, "scale_um_per_px", "camera.scale_um_per_px")
+    if scale is not None:
+        metadata.scale_m_per_px = scale * 1e-6
+    interval = positive_number(camera, "frame_interval_us", "camera.frame_interval_us")
+    if interval is not None:
+        metadata.dt_seconds = interval * 1e-6
+
+    if "tone" in background:
+        tone = background["tone"]
+        if tone == "light":
+            metadata.dark_particles = True
+        elif tone == "dark":
+            metadata.dark_particles = False
+        else:
+            warnings.append("Некорректное значение background.tone в config.json: допустимы light или dark")
+    return metadata
 
 
 def parse_experiment_afxml(afxml_path: Path) -> ExperimentRecord:
