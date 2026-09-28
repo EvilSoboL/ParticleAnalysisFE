@@ -613,6 +613,115 @@ def test_actual_flow_default_keeps_camera_layout_and_reflection(tmp_path):
     assert saved[2, 1] == 255
     assert saved[0, 1] == 0
 
+
+def test_sequence_dark_particles_uint8_threshold_boundary_and_unicode_paths(tmp_path):
+    source = tmp_path / "серия кадров"
+    source.mkdir()
+    image = np.array([[0, 127, 128, 255]], dtype=np.uint8)
+    for index in (1, 2):
+        success, encoded = cv2.imencode(".png", image)
+        assert success
+        encoded.tofile(str(source / f"frame_{index}.png"))
+    processor = SortAndBinarize(
+        str(source), threshold=128, output_base_folder=str(tmp_path / "выход"),
+        input_mode="frame_sequence", dark_particles=True,
+    )
+
+    result = processor.process()
+
+    assert result.success
+    saved = cv2.imdecode(
+        np.fromfile(str(tmp_path / "выход" / "binary_filter_128" / "cam_1" / "1_a.png"), dtype=np.uint8),
+        cv2.IMREAD_UNCHANGED,
+    )
+    assert saved.tolist() == [[255, 255, 0, 0]]
+
+
+def test_sequence_uint16_light_particles_keeps_threshold_behavior(tmp_path):
+    source = tmp_path / "frames"
+    source.mkdir()
+    image = np.array([[0, 9999, 10000, 65535]], dtype=np.uint16)
+    for index in (1, 2):
+        assert cv2.imwrite(str(source / f"frame_{index}.png"), image)
+    processor = SortAndBinarize(
+        str(source), threshold=10000, output_base_folder=str(tmp_path / "out"),
+        input_mode="frame_sequence", dark_particles=False,
+    )
+
+    result = processor.process()
+
+    assert result.success
+    saved = cv2.imread(str(tmp_path / "out" / "binary_filter_10000" / "cam_1" / "1_a.png"), cv2.IMREAD_UNCHANGED)
+    assert saved.tolist() == [[0, 0, 255, 255]]
+
+
+def test_sequence_rejects_mixed_dimensions_and_depth_before_output(tmp_path):
+    source = tmp_path / "frames"
+    source.mkdir()
+    assert cv2.imwrite(str(source / "frame_1.png"), np.zeros((2, 3), dtype=np.uint8))
+    assert cv2.imwrite(str(source / "frame_2.png"), np.zeros((2, 4), dtype=np.uint8))
+    assert cv2.imwrite(str(source / "frame_3.png"), np.zeros((2, 3), dtype=np.uint16))
+    assert cv2.imwrite(str(source / "frame_4.png"), np.zeros((2, 3), dtype=np.uint8))
+    output = tmp_path / "out"
+    processor = SortAndBinarize(
+        str(source), threshold=128, output_base_folder=str(output), input_mode="frame_sequence",
+    )
+
+    result = processor.process()
+
+    assert not result.success
+    assert "frame_2.png" in result.errors[0]
+    assert not output.exists()
+
+
+def test_sequence_rejects_mixed_bit_depth_before_output(tmp_path):
+    source = tmp_path / "frames"
+    source.mkdir()
+    assert cv2.imwrite(str(source / "frame_1.png"), np.zeros((2, 3), dtype=np.uint8))
+    assert cv2.imwrite(str(source / "frame_2.png"), np.zeros((2, 3), dtype=np.uint8))
+    assert cv2.imwrite(str(source / "frame_3.png"), np.zeros((2, 3), dtype=np.uint16))
+    assert cv2.imwrite(str(source / "frame_4.png"), np.zeros((2, 3), dtype=np.uint16))
+    output = tmp_path / "out"
+
+    result = SortAndBinarize(
+        str(source), threshold=128, output_base_folder=str(output), input_mode="frame_sequence",
+    ).process()
+
+    assert not result.success
+    assert "frame_3.png" in result.errors[0]
+    assert not output.exists()
+
+
+def test_sequence_rejects_corrupted_file_before_output(tmp_path):
+    source = tmp_path / "frames"
+    source.mkdir()
+    (source / "frame_1.png").write_bytes(b"broken")
+    (source / "frame_2.png").write_bytes(b"broken")
+    output = tmp_path / "out"
+    result = SortAndBinarize(
+        str(source), threshold=300, output_base_folder=str(output), input_mode="frame_sequence",
+    ).process()
+
+    assert not result.success
+    assert "frame_1.png" in result.errors[0]
+    assert not output.exists()
+
+
+def test_sequence_rejects_threshold_outside_actual_bit_depth(tmp_path):
+    source = tmp_path / "frames"
+    source.mkdir()
+    for index in (1, 2):
+        assert cv2.imwrite(str(source / f"frame_{index}.png"), np.zeros((2, 3), dtype=np.uint8))
+    output = tmp_path / "out"
+
+    result = SortAndBinarize(
+        str(source), threshold=256, output_base_folder=str(output), input_mode="frame_sequence",
+    ).process()
+
+    assert not result.success
+    assert "0..255" in result.errors[0]
+    assert not output.exists()
+
 if __name__ == "__main__":
     # Путь к тестовым данным - папка _cam_sorted с подпапками cam_1 и cam_2
     # Измените путь на актуальный путь к вашим тестовым данным

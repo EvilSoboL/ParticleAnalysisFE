@@ -69,7 +69,8 @@ class SortAndBinarize:
                  output_base_folder: Optional[str] = None,
                  median_filter_enabled: bool = False,
                  median_kernel_size: int = 5,
-                 input_mode: str = "actual_flow"):
+                 input_mode: str = "actual_flow",
+                 dark_particles: bool = False):
         """
         Инициализация.
 
@@ -82,6 +83,7 @@ class SortAndBinarize:
         if input_mode not in ("actual_flow", "frame_sequence"):
             raise ValueError(f"Неизвестный режим обработки: {input_mode}")
         self.input_mode = input_mode
+        self.dark_particles = bool(dark_particles)
         self.threshold = threshold
         self.validate_format = validate_format
         self.median_filter_enabled = median_filter_enabled
@@ -149,7 +151,7 @@ class SortAndBinarize:
 
     def _validate_image(self, image_path: Path) -> bool:
         """Проверяет, что изображение имеет 16-битный формат PNG."""
-        img = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+        img = self._read_image(image_path)
         if img is None:
             logger.error(f"Не удалось загрузить изображение: {image_path}")
             return False
@@ -160,6 +162,27 @@ class SortAndBinarize:
             )
             return False
         return True
+
+    @staticmethod
+    def _read_image(image_path: Path):
+        """Читает изображение с поддержкой Unicode-путей Windows."""
+        try:
+            data = np.fromfile(str(image_path), dtype=np.uint8)
+        except OSError:
+            return None
+        return cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+
+    @staticmethod
+    def _write_image(image_path: Path, image) -> bool:
+        """Записывает PNG с поддержкой Unicode-путей Windows."""
+        try:
+            success, encoded = cv2.imencode(".png", image)
+            if not success:
+                return False
+            encoded.tofile(str(image_path))
+            return True
+        except OSError:
+            return False
 
     def process(self) -> SortBinarizeResult:
         """
@@ -199,13 +222,40 @@ class SortAndBinarize:
                     errors=[f"Папка результата уже содержит данные{reason}. Укажите другую папку результата."],
                 )
 
-        # Создание структуры папок только после проверки входа и результата.
-        self._create_output_structure()
-
         total_files = len(images)
 
+        sequence_bit_depth = None
+        sequence_shape = None
+        if self.input_mode == "frame_sequence":
+            for img_path in images:
+                img = self._read_image(img_path)
+                if img is None:
+                    errors.append(f"Не удалось загрузить изображение: {img_path.name}")
+                    break
+                if img.ndim != 2 or img.dtype not in (np.uint8, np.uint16):
+                    errors.append(f"Файл {img_path.name}: требуется одноканальное изображение uint8 или uint16")
+                    break
+                if sequence_shape is None:
+                    sequence_shape = img.shape
+                    sequence_bit_depth = img.dtype
+                elif img.shape != sequence_shape:
+                    errors.append(f"Файл {img_path.name}: размер не совпадает с остальными кадрами серии")
+                    break
+                elif img.dtype != sequence_bit_depth:
+                    errors.append(f"Файл {img_path.name}: разрядность не совпадает с остальными кадрами серии")
+                    break
+            if not errors:
+                max_value = 255 if sequence_bit_depth == np.uint8 else 65535
+                if not isinstance(self.threshold, (int, np.integer)) or not 0 <= self.threshold <= max_value:
+                    errors.append(f"Порог для серии должен быть в диапазоне 0..{max_value}")
+            if errors:
+                return SortBinarizeResult(
+                    success=False, cam1_count=0, cam2_count=0, total_processed=0,
+                    output_folder=str(self.output_folder), threshold=self.threshold, errors=errors,
+                )
+
         # Валидация формата
-        if self.validate_format:
+        if self.validate_format and self.input_mode == "actual_flow":
             logger.info("Проверка формата изображений...")
             for img_path in images:
                 if not self._validate_image(img_path):
@@ -216,6 +266,9 @@ class SortAndBinarize:
                         errors=[f"Изображение {img_path.name} не прошло валидацию формата"]
                     )
             logger.info("Все изображения прошли валидацию формата")
+
+        # Создаём результат после структурной проверки всех кадров серии.
+        self._create_output_structure()
 
         # Счётчики
         cam1_count = 0
@@ -256,7 +309,7 @@ class SortAndBinarize:
                 self._progress_callback(progress)
 
             # Загрузка 16-bit изображения
-            img = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
+            img = self._read_image(img_path)
             if img is None:
                 errors.append(f"Не удалось загрузить: {img_path.name}")
                 continue
@@ -269,7 +322,10 @@ class SortAndBinarize:
                 img = cv2.medianBlur(img, self.median_kernel_size)
 
             # Бинаризация: 16-bit → 8-bit (0 или 255)
-            binary = np.where(img >= self.threshold, 255, 0).astype(np.uint8)
+            if self.dark_particles:
+                binary = np.where(img < self.threshold, 255, 0).astype(np.uint8)
+            else:
+                binary = np.where(img >= self.threshold, 255, 0).astype(np.uint8)
 
             # Определение выходной папки и имени файла
             if is_sequence:
@@ -292,7 +348,7 @@ class SortAndBinarize:
                     cam2_pair_counter += 1
 
             # Сохранение 8-bit PNG
-            success = cv2.imwrite(str(output_path), binary)
+            success = self._write_image(output_path, binary)
             if not success:
                 errors.append(f"Ошибка сохранения: {new_filename}")
                 if is_cam1:
