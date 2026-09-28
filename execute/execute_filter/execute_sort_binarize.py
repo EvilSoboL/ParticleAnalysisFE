@@ -26,6 +26,7 @@ from src.data_processing.sort_and_binarize import (
     SortBinarizeProgress,
     SortBinarizeResult
 )
+from src.data_processing.experiment_preprocess import get_sequence_frames
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +63,8 @@ class SortBinarizeParameters:
     threshold_max: int = 65535  # Максимальное значение для slider
     threshold_default: int = 10000  # Значение по умолчанию
     threshold_step: int = 100  # Шаг изменения в slider
+    input_mode: str = "actual_flow"
+    dark_particles: bool = False
 
     def validate(self) -> tuple[bool, str]:
         """
@@ -77,17 +80,22 @@ class SortBinarizeParameters:
         if not input_path.is_dir():
             return False, f"Указанный путь не является папкой: {self.input_folder}"
 
-        # Проверка наличия PNG файлов
-        png_files = list(input_path.glob("*.png"))
-        if not png_files:
-            return False, f"В папке {self.input_folder} нет PNG файлов"
-
-        # Проверка количества файлов (должно быть кратно 4)
-        if len(png_files) % 4 != 0:
-            return False, (
-                f"Количество изображений ({len(png_files)}) не кратно 4. "
-                f"Алгоритм работает с циклом из 4 изображений."
-            )
+        if self.input_mode == "actual_flow":
+            png_files = list(input_path.glob("*.png"))
+            if not png_files:
+                return False, f"В папке {self.input_folder} нет PNG файлов"
+            if len(png_files) % 4 != 0:
+                return False, (
+                    f"Количество изображений ({len(png_files)}) не кратно 4. "
+                    f"Алгоритм работает с циклом из 4 изображений."
+                )
+        elif self.input_mode == "frame_sequence":
+            try:
+                get_sequence_frames(input_path)
+            except (ValueError, OSError) as exc:
+                return False, str(exc)
+        else:
+            return False, f"Неизвестный режим обработки: {self.input_mode}"
 
         # Проверка порога
         if not (self.threshold_min <= self.threshold <= self.threshold_max):
@@ -151,6 +159,8 @@ class SortBinarizeExecutor:
                 output_base_folder=parameters.output_base_folder,
                 median_filter_enabled=parameters.median_filter_enabled,
                 median_kernel_size=parameters.median_kernel_size,
+                input_mode=parameters.input_mode,
+                dark_particles=parameters.dark_particles,
             )
             logger.info(
                 f"Параметры установлены: input_folder={parameters.input_folder}, "
