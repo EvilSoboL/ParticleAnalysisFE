@@ -453,7 +453,49 @@ class AutomatedPipelineTab(QWidget):
         self._log(f"Сканирование: {root}")
         for error in scan_result.errors:
             self._log(f"ОШИБКА: {error}")
+        for record in self._records:
+            for warning in record.warnings:
+                self._log(f"ПРЕДУПРЕЖДЕНИЕ: {warning}")
+        if self.input_mode_combo.currentData() == "frame_sequence":
+            sequence = next((record for record in self._records
+                             if record.input_mode == "frame_sequence" and record.sort_ready), None)
+            if sequence is not None:
+                self._apply_sequence_metadata(sequence)
         self.run_btn.setEnabled(ready > 0)
+
+    def _apply_sequence_metadata(self, record) -> None:
+        metadata = record.sequence_metadata
+        if metadata is None:
+            self._log("Метаданные серии недоступны; оставлены ручные параметры.")
+            return
+
+        applied = []
+        if metadata.width_px is not None:
+            self.plane_width_spin.setValue(metadata.width_px)
+            applied.append(f"ширина {metadata.width_px} px")
+        if metadata.height_px is not None:
+            self.plane_height_spin.setValue(metadata.height_px)
+            applied.append(f"высота {metadata.height_px} px")
+        if metadata.scale_m_per_px is not None:
+            self.scale_spin.setValue(metadata.scale_m_per_px)
+            applied.append(f"масштаб {metadata.scale_m_per_px:g} м/px")
+        if metadata.dt_seconds is not None:
+            self.dt_spin.setValue(metadata.dt_seconds)
+            applied.append(f"dt {metadata.dt_seconds:g} с")
+        if metadata.dark_particles is not None:
+            self.dark_particles_cb.setChecked(metadata.dark_particles)
+            applied.append("тёмные частицы" if metadata.dark_particles else "светлые частицы")
+        if metadata.bit_depth is not None:
+            index = self.bit_depth_combo.findData(metadata.bit_depth)
+            if index >= 0:
+                self.bit_depth_combo.setCurrentIndex(index)
+                applied.append(f"глубина {metadata.bit_depth} бит")
+
+        if applied:
+            self._log("Параметры из config.json: " + "; ".join(applied) + ".")
+        else:
+            self._log("В config.json нет применимых параметров; оставлены ручные значения.")
+        self._log("Порог бинаризации требует подбора по изображениям.")
 
     def _populate_table(self) -> None:
         self.table.setRowCount(len(self._records))
