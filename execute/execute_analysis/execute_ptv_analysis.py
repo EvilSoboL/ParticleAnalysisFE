@@ -63,6 +63,7 @@ class PTVParameters:
 
     # ОПЦИОНАЛЬНЫЕ ПАРАМЕТРЫ
     enable_progress_callback: bool = True  # Включить callback для прогресса
+    cameras: tuple[str, ...] = ("cam_1", "cam_2")
 
     # GUI ПОДСКАЗКИ (не используются в обработке, только для GUI)
     detection_min_area_min: int = 1
@@ -93,13 +94,12 @@ class PTVParameters:
         if not input_path.exists():
             return False, f"Входная папка не существует: {self.input_folder}"
 
-        cam1_path = input_path / "cam_1"
-        cam2_path = input_path / "cam_2"
+        if self.cameras not in (("cam_1",), ("cam_1", "cam_2")):
+            return False, f"Недопустимый список камер: {self.cameras}"
 
-        if not cam1_path.exists():
-            return False, f"Не найдена папка cam_1 в {self.input_folder}"
-        if not cam2_path.exists():
-            return False, f"Не найдена папка cam_2 в {self.input_folder}"
+        for camera in self.cameras:
+            if not (input_path / camera).exists():
+                return False, f"Не найдена папка {camera} в {self.input_folder}"
 
         # Проверка параметров детектирования
         if self.detection_min_area < 1:
@@ -163,7 +163,7 @@ class PTVExecutor:
         self.parameters = parameters
 
         # Применение параметров к анализатору
-        if not self.analyzer.set_input_folder(parameters.input_folder):
+        if not self.analyzer.set_input_folder(parameters.input_folder, parameters.cameras):
             return False, "Не удалось установить входную папку"
 
         if not self.analyzer.set_detection_config(

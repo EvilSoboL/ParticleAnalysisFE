@@ -105,6 +105,7 @@ class PTVAnalyzer:
     def __init__(self):
         """Инициализация модуля PTV анализа."""
         self.input_folder: Optional[Path] = None
+        self.cameras: Tuple[str, ...] = ("cam_1", "cam_2")
         self.output_folder: Optional[Path] = None
         self.detection_config = DetectionConfig()
         self.matching_config = MatchingConfig()
@@ -113,7 +114,11 @@ class PTVAnalyzer:
 
         logger.info("Инициализирован модуль PTV анализа")
 
-    def set_input_folder(self, folder_path: str) -> bool:
+    def set_input_folder(
+        self,
+        folder_path: str,
+        cameras: Tuple[str, ...] = ("cam_1", "cam_2")
+    ) -> bool:
         """
         Установка входной папки (папка binary_filter_XXXX).
 
@@ -123,18 +128,20 @@ class PTVAnalyzer:
         Returns:
             bool: True если папка валидна, False иначе
         """
+        if cameras not in (("cam_1",), ("cam_1", "cam_2")):
+            logger.error(f"Недопустимый список камер: {cameras}")
+            return False
+
         path = Path(folder_path)
 
         if not path.exists():
             logger.error(f"Папка не существует: {folder_path}")
             return False
 
-        cam1_path = path / "cam_1"
-        cam2_path = path / "cam_2"
-
-        if not cam1_path.exists() or not cam2_path.exists():
-            logger.error("Папка должна содержать подпапки cam_1 и cam_2")
-            return False
+        for camera in cameras:
+            if not (path / camera).exists():
+                logger.error(f"Не найдена папка {camera} в {folder_path}")
+                return False
 
         # Проверка формата имени папки
         if not path.name.startswith("binary_filter_"):
@@ -143,6 +150,7 @@ class PTVAnalyzer:
             )
 
         self.input_folder = path
+        self.cameras = cameras
         self._update_output_folder()
         logger.info(f"Установлена входная папка: {self.input_folder}")
 
@@ -814,24 +822,21 @@ class PTVAnalyzer:
         all_errors = []
         all_warnings = []
 
-        # Обработка cam_1
-        logger.info("\n--- Обработка cam_1 ---")
-        (cam1_images, cam1_particles, cam1_pairs,
-         cam1_errors, cam1_warnings) = self.process_camera("cam_1")
-        all_errors.extend(cam1_errors)
-        all_warnings.extend(cam1_warnings)
+        camera_results = {}
+        for camera in self.cameras:
+            if self._cancel_requested:
+                break
+            logger.info(f"\n--- Обработка {camera} ---")
+            camera_results[camera] = self.process_camera(camera)
+            all_errors.extend(camera_results[camera][3])
+            all_warnings.extend(camera_results[camera][4])
 
-        # Обработка cam_2
-        cam2_images = 0
-        cam2_particles = 0
-        cam2_pairs = 0
-
-        if not self._cancel_requested:
-            logger.info("\n--- Обработка cam_2 ---")
-            (cam2_images, cam2_particles, cam2_pairs,
-             cam2_errors, cam2_warnings) = self.process_camera("cam_2")
-            all_errors.extend(cam2_errors)
-            all_warnings.extend(cam2_warnings)
+        cam1_images, cam1_particles, cam1_pairs, _, _ = camera_results.get(
+            "cam_1", (0, 0, 0, [], [])
+        )
+        cam2_images, cam2_particles, cam2_pairs, _, _ = camera_results.get(
+            "cam_2", (0, 0, 0, [], [])
+        )
 
         # Итоговые результаты
         total_images = cam1_images + cam2_images
