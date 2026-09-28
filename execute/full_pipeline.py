@@ -91,7 +91,12 @@ class AutomatedPipelineConfig:
     plot_dpi: int = 150
     plot_colormap: str = "jet"
 
+    input_mode: str = "actual_flow"
+    dark_particles: bool = False
+
     def validate(self) -> tuple[bool, str]:
+        if self.input_mode not in ("actual_flow", "frame_sequence"):
+            return False, f"Неизвестный режим обработки: {self.input_mode}"
         if not Path(self.input_root).is_dir():
             return False, f"Корневая папка не существует: {self.input_root}"
         if not self.output_root.strip():
@@ -201,6 +206,12 @@ class AutomatedPipelineExecutor:
             return AutomatedPipelineResult(
                 False, False, self.config.output_root, [], ["Не выбраны эксперименты для обработки"]
             )
+        mismatched = [record.name for record in self.experiments if record.input_mode != self.config.input_mode]
+        if mismatched:
+            return AutomatedPipelineResult(
+                False, False, self.config.output_root, [],
+                [f"Режим обработки конфигурации не совпадает с режимом эксперимента: {', '.join(mismatched)}"],
+            )
 
         output_root = Path(self.config.output_root)
         output_root.mkdir(parents=True, exist_ok=True)
@@ -257,6 +268,8 @@ class AutomatedPipelineExecutor:
                 experiment_name=record.name,
                 median_filter_enabled=self.config.median_filter_enabled,
                 median_kernel_size=self.config.median_kernel_size,
+                input_mode=self.config.input_mode,
+                dark_particles=self.config.dark_particles,
             )
             sort_executor = SortBinarizeExecutor()
             self._active_executor = sort_executor
@@ -284,6 +297,7 @@ class AutomatedPipelineExecutor:
                 detection_max_area=self.config.detection_max_area,
                 matching_max_distance=self.config.matching_max_distance,
                 matching_max_diameter_diff=self.config.matching_max_diameter_diff,
+                cameras=("cam_1",) if self.config.input_mode == "frame_sequence" else ("cam_1", "cam_2"),
             )
             ptv_executor = PTVExecutor()
             self._active_executor = ptv_executor
@@ -299,10 +313,8 @@ class AutomatedPipelineExecutor:
                 raise RuntimeError("; ".join(ptv_result.errors) or "Ошибка PTV анализа")
             ptv_folder = Path(ptv_result.output_folder)
             result.ptv_folder = str(ptv_folder)
-            source_files = {
-                camera: ptv_folder / f"{camera}_pairs_sum.csv"
-                for camera in ("cam_1", "cam_2")
-            }
+            cameras = ("cam_1",) if self.config.input_mode == "frame_sequence" else ("cam_1", "cam_2")
+            source_files = {camera: ptv_folder / f"{camera}_pairs_sum.csv" for camera in cameras}
             for camera, source in source_files.items():
                 if not source.exists():
                     raise RuntimeError(f"Не найден результат PTV: {source}")
@@ -316,7 +328,7 @@ class AutomatedPipelineExecutor:
                 result.status = "Фильтрация векторов"
                 filtered = {}
                 for camera_index, (camera, source) in enumerate(source_files.items()):
-                    emit_stage(stage_index, result.status, camera_index * 50.0, f"{record.name}: фильтрация {camera}")
+                    emit_stage(stage_index, result.status, camera_index / len(source_files) * 100.0, f"{record.name}: фильтрация {camera}")
                     params = VectorFilterParameters(
                         input_file=str(source),
                         filter_u=self.config.filter_u,
@@ -345,7 +357,7 @@ class AutomatedPipelineExecutor:
                 result.status = "Усреднение векторов"
                 averaged = {}
                 for camera_index, (camera, source) in enumerate(source_files.items()):
-                    emit_stage(stage_index, result.status, camera_index * 50.0, f"{record.name}: усреднение {camera}")
+                    emit_stage(stage_index, result.status, camera_index / len(source_files) * 100.0, f"{record.name}: усреднение {camera}")
                     params = VectorAverageParameters(
                         input_file=str(source),
                         plane_width=self.config.plane_width,
@@ -373,7 +385,7 @@ class AutomatedPipelineExecutor:
                 result.status = "Преобразование координат"
                 transformed = {}
                 for camera_index, (camera, source) in enumerate(source_files.items()):
-                    emit_stage(stage_index, result.status, camera_index * 50.0, f"{record.name}: координаты {camera}")
+                    emit_stage(stage_index, result.status, camera_index / len(source_files) * 100.0, f"{record.name}: координаты {camera}")
                     prefix = "cam1" if camera == "cam_1" else "cam2"
                     params = CoordinateTransformParameters(
                         input_file=str(source),
