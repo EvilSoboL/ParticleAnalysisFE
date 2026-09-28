@@ -1,4 +1,5 @@
-/tests/
+/tests/*
+!/tests/test_full_pipeline_graphs.py
 
 # Python cache
 __pycache__/

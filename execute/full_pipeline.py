@@ -451,12 +451,13 @@ class AutomatedPipelineExecutor:
         outputs: Dict[str, str] = {}
 
         histogram_sources = []
-        if self.config.histogram_cam1:
-            histogram_sources.append(("cam_1", [stage_sources["raw"]["cam_1"]]))
-        if self.config.histogram_cam2:
-            histogram_sources.append(("cam_2", [stage_sources["raw"]["cam_2"]]))
-        if self.config.histogram_combined:
-            histogram_sources.append(("all_cameras", list(stage_sources["raw"].values())))
+        raw_sources = stage_sources["raw"]
+        if self.config.histogram_cam1 and "cam_1" in raw_sources:
+            histogram_sources.append(("cam_1", [raw_sources["cam_1"]]))
+        if self.config.histogram_cam2 and "cam_2" in raw_sources:
+            histogram_sources.append(("cam_2", [raw_sources["cam_2"]]))
+        if self.config.histogram_combined and raw_sources:
+            histogram_sources.append(("all_cameras", list(raw_sources.values())))
         for label, files in histogram_sources:
             self._ensure_not_cancelled()
             saved = self._save_histogram(files, graph_folder, label)
