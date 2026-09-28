@@ -32,7 +32,11 @@ from PyQt5.QtWidgets import (
 )
 
 from execute.full_pipeline import AutomatedPipelineConfig, AutomatedPipelineExecutor
-from src.data_processing.experiment_preprocess import default_processed_root, scan_experiment_root
+from src.data_processing.experiment_preprocess import (
+    default_processed_root,
+    scan_experiment_root,
+    scan_frame_sequence,
+)
 
 
 class AutomatedPipelineWorker(QThread):
@@ -89,6 +93,9 @@ class AutomatedPipelineTab(QWidget):
         self._executor = None
         self._worker = None
         self._last_log_key = None
+        self._actual_threshold = 2000
+        self._sequence_thresholds = {8: 128, 16: 2000}
+        self._last_input_mode = "actual_flow"
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -99,6 +106,14 @@ class AutomatedPipelineTab(QWidget):
         self.output_root_line.setPlaceholderText("По умолчанию <папка замеров>_processed")
         root_layout.addLayout(input_row)
         root_layout.addLayout(output_row)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Формат входных данных:"))
+        self.input_mode_combo = QComboBox()
+        self.input_mode_combo.addItem("Actual Flow", "actual_flow")
+        self.input_mode_combo.addItem("Серия кадров — одна камера", "frame_sequence")
+        mode_row.addWidget(self.input_mode_combo)
+        root_layout.addLayout(mode_row)
 
         command_row = QHBoxLayout()
         self.scan_btn = QPushButton("Сканировать эксперименты")
@@ -123,11 +138,13 @@ class AutomatedPipelineTab(QWidget):
         self.scan_btn.clicked.connect(self._scan)
         self.run_btn.clicked.connect(self._run)
         self.cancel_btn.clicked.connect(self._cancel)
-        self.input_root_line.textEdited.connect(self._input_root_changed)
+        self.input_root_line.textChanged.connect(self._input_root_changed)
+        self.input_mode_combo.currentIndexChanged.connect(self._input_mode_changed)
         self.filter_group.toggled.connect(self._sync_dependencies)
         self.average_group.toggled.connect(self._sync_dependencies)
         self.transform_group.toggled.connect(self._sync_dependencies)
         self._sync_dependencies()
+        self._sync_input_mode()
 
     def _create_settings_panel(self) -> QWidget:
         scroll = QScrollArea()
@@ -138,25 +155,38 @@ class AutomatedPipelineTab(QWidget):
 
         sort_group = QGroupBox("1. Сортировка и бинаризация")
         sort_grid = QGridLayout(sort_group)
-        sort_grid.addWidget(QLabel("Порог, 16-bit:"), 0, 0)
+        self.bit_depth_label = QLabel("Глубина серии:")
+        sort_grid.addWidget(self.bit_depth_label, 0, 0)
+        self.bit_depth_combo = QComboBox()
+        self.bit_depth_combo.addItem("8 бит", 8)
+        self.bit_depth_combo.addItem("16 бит", 16)
+        sort_grid.addWidget(self.bit_depth_combo, 0, 1)
+        self.threshold_label = QLabel("Порог, 16-bit:")
+        sort_grid.addWidget(self.threshold_label, 1, 0)
         self.threshold_spin = QSpinBox()
         self.threshold_spin.setRange(0, 65535)
         self.threshold_spin.setSingleStep(100)
         self.threshold_spin.setValue(2000)
-        sort_grid.addWidget(self.threshold_spin, 0, 1)
+        self.threshold_spin.valueChanged.connect(self._remember_threshold)
+        sort_grid.addWidget(self.threshold_spin, 1, 1)
+        self.dark_particles_cb = QCheckBox("Тёмные частицы")
+        sort_grid.addWidget(self.dark_particles_cb, 2, 0, 1, 2)
+        self.sequence_pairs_label = QLabel("Пары: 1–2, 3–4, …; без отражения")
+        sort_grid.addWidget(self.sequence_pairs_label, 3, 0, 1, 2)
         self.validate_cb = QCheckBox("Проверять формат 16-bit PNG")
         self.validate_cb.setChecked(True)
-        sort_grid.addWidget(self.validate_cb, 1, 0, 1, 2)
+        sort_grid.addWidget(self.validate_cb, 4, 0, 1, 2)
         self.median_cb = QCheckBox("Медианная фильтрация исходного изображения")
-        sort_grid.addWidget(self.median_cb, 2, 0, 1, 2)
-        sort_grid.addWidget(QLabel("Окно:"), 3, 0)
+        sort_grid.addWidget(self.median_cb, 5, 0, 1, 2)
+        sort_grid.addWidget(QLabel("Окно:"), 6, 0)
         self.median_combo = QComboBox()
         self.median_combo.addItem("3x3", 3)
         self.median_combo.addItem("5x5", 5)
         self.median_combo.setCurrentIndex(1)
-        sort_grid.addWidget(self.median_combo, 3, 1)
+        sort_grid.addWidget(self.median_combo, 6, 1)
         self.median_cb.toggled.connect(self.median_combo.setEnabled)
         self.median_combo.setEnabled(False)
+        self.bit_depth_combo.currentIndexChanged.connect(self._bit_depth_changed)
         layout.addWidget(sort_group)
 
         ptv_group = QGroupBox("2. PTV анализ")
@@ -337,7 +367,70 @@ class AutomatedPipelineTab(QWidget):
     def _input_root_changed(self, text: str) -> None:
         if text.strip() and not self.output_root_line.text().strip():
             self.output_root_line.setPlaceholderText(default_processed_root(text.strip()))
+        self._invalidate_scan()
+
+    def _invalidate_scan(self) -> None:
+        self._records = []
+        self._row_by_id.clear()
+        self.table.setRowCount(0)
         self.run_btn.setEnabled(False)
+        self.summary_label.setText("Параметры входа изменены — выполните сканирование")
+
+    def _input_mode_changed(self, _index: int) -> None:
+        self._invalidate_scan()
+        self._sync_input_mode()
+
+    def _sync_input_mode(self) -> None:
+        is_sequence = self.input_mode_combo.currentData() == "frame_sequence"
+        new_mode = "frame_sequence" if is_sequence else "actual_flow"
+        if new_mode != self._last_input_mode:
+            if self._last_input_mode == "actual_flow":
+                self._actual_threshold = self.threshold_spin.value()
+            else:
+                old_depth = 8 if self.bit_depth_combo.currentData() == 8 else 16
+                self._sequence_thresholds[old_depth] = self.threshold_spin.value()
+            self._last_input_mode = new_mode
+        if is_sequence and not self.dark_particles_cb.property("sequence_initialized"):
+            self.dark_particles_cb.setChecked(True)
+            self.dark_particles_cb.setProperty("sequence_initialized", True)
+        self.bit_depth_combo.setVisible(is_sequence)
+        self.bit_depth_label.setVisible(is_sequence)
+        if is_sequence:
+            self._bit_depth_changed(self.bit_depth_combo.currentIndex())
+        else:
+            self.threshold_spin.setRange(0, 65535)
+            self.threshold_spin.setSingleStep(100)
+            self.threshold_spin.setValue(self._actual_threshold)
+            self.threshold_label.setText("Порог, 16-bit:")
+            self.validate_cb.setChecked(True)
+        self.threshold_label.setText("Порог, 8-bit:" if is_sequence and self.bit_depth_combo.currentData() == 8
+                                     else "Порог, 16-bit:")
+        self.validate_cb.setEnabled(not is_sequence)
+        if is_sequence and self.bit_depth_combo.currentData() == 8:
+            self.validate_cb.setChecked(False)
+        self.sequence_pairs_label.setVisible(is_sequence)
+        self.cam2_x_spin.setEnabled(not is_sequence)
+        self.cam2_y_spin.setEnabled(not is_sequence)
+        self.cam2_angle_spin.setEnabled(not is_sequence)
+        self.hist_cam2_cb.setEnabled(not is_sequence)
+
+    def _bit_depth_changed(self, _index: int) -> None:
+        is_8_bit = self.bit_depth_combo.currentData() == 8
+        if self.input_mode_combo.currentData() != "frame_sequence":
+            return
+        depth = 8 if is_8_bit else 16
+        threshold = self._sequence_thresholds[depth]
+        self.threshold_spin.setRange(0, 255 if is_8_bit else 65535)
+        self.threshold_spin.setSingleStep(1 if is_8_bit else 100)
+        self.threshold_spin.setValue(threshold)
+        self.threshold_label.setText("Порог, 8-bit:" if is_8_bit else "Порог, 16-bit:")
+
+    def _remember_threshold(self, value: int) -> None:
+        if self.input_mode_combo.currentData() == "frame_sequence":
+            depth = 8 if self.bit_depth_combo.currentData() == 8 else 16
+            self._sequence_thresholds[depth] = value
+        else:
+            self._actual_threshold = value
 
     def _scan(self) -> None:
         root = self.input_root_line.text().strip()
@@ -347,7 +440,11 @@ class AutomatedPipelineTab(QWidget):
         if not self.output_root_line.text().strip():
             self.output_root_line.setText(default_processed_root(root))
 
-        scan_result = scan_experiment_root(root)
+        scan_result = (
+            scan_frame_sequence(root)
+            if self.input_mode_combo.currentData() == "frame_sequence"
+            else scan_experiment_root(root)
+        )
         self._records = scan_result.records
         self._populate_table()
         ready = sum(record.sort_ready for record in self._records)
@@ -434,7 +531,8 @@ class AutomatedPipelineTab(QWidget):
             scale_m_per_px=self.scale_spin.value(),
             dt_seconds=self.dt_spin.value(),
             histogram_cam1=self.hist_cam1_cb.isChecked(),
-            histogram_cam2=self.hist_cam2_cb.isChecked(),
+            histogram_cam2=(self.hist_cam2_cb.isChecked()
+                            if self.input_mode_combo.currentData() == "actual_flow" else False),
             histogram_combined=self.hist_all_cb.isChecked(),
             histogram_bin_width=self.hist_width_spin.value(),
             vector_plot_raw=self.vector_raw_cb.isChecked(),
@@ -446,6 +544,8 @@ class AutomatedPipelineTab(QWidget):
             plot_arrow_scale=self.arrow_scale_spin.value(),
             plot_dpi=self.dpi_spin.value(),
             plot_colormap=self.colormap_combo.currentText(),
+            input_mode=self.input_mode_combo.currentData(),
+            dark_particles=self.dark_particles_cb.isChecked(),
         )
 
     def _run(self) -> None:
@@ -537,6 +637,8 @@ class AutomatedPipelineTab(QWidget):
         self.cancel_btn.setEnabled(running)
         self.input_root_line.setEnabled(not running)
         self.output_root_line.setEnabled(not running)
+        for widget in (self.input_mode_combo, self.bit_depth_combo, self.dark_particles_cb):
+            widget.setEnabled(not running)
 
     def _log(self, text: str) -> None:
         self.log_text.append(text)
